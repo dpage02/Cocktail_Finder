@@ -161,8 +161,15 @@ function fetchLink_(url) {
     const id = (url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/) || [])[1];
     if (!id) throw new Error("no video id");
     let text = "", title = "", author = "", how = [];
+    // Best source: YouTube Data API (Services > YouTube Data API v3 in the script editor). Free, reads full descriptions.
+    try {
+      if (typeof YouTube !== "undefined") {
+        const v = YouTube.Videos.list("snippet", { id: id }).items || [];
+        if (v.length) { text = v[0].snippet.description || ""; title = v[0].snippet.title || ""; author = v[0].snippet.channelTitle || ""; how.push("API"); }
+      }
+    } catch (e) { how.push("API-err"); }
     for (const client of [{ clientName: "WEB", clientVersion: "2.20241101.00.00" }, { clientName: "ANDROID", clientVersion: "19.09.37", androidSdkVersion: 30 }, { clientName: "IOS", clientVersion: "19.09.3" }]) {
-      if (text) break;
+      if (text || how.indexOf("API") >= 0) break;
       const r = UrlFetchApp.fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
         method: "post", contentType: "application/json", muteHttpExceptions: true, headers: UA_,
         payload: JSON.stringify({ videoId: id, context: { client: Object.assign({ hl: "en", gl: "US" }, client) } }),
@@ -174,7 +181,7 @@ function fetchLink_(url) {
         text = v.shortDescription || ""; title = title || v.title || ""; author = author || v.author || "";
       } catch (e) {}
     }
-    const page = text ? { text: "" } : get_("https://www.youtube.com/watch?v=" + id + "&hl=en");
+    const page = text || how.indexOf("API") >= 0 ? { text: "" } : get_("https://www.youtube.com/watch?v=" + id + "&hl=en");
     const d = page.text.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
     if (!text && d) { try { text = JSON.parse('"' + d[1] + '"'); } catch (e) {} }
     if (!text) text = meta_(page.text, "og:description") || meta_(page.text, "description");
