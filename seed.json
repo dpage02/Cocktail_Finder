@@ -1,0 +1,79 @@
+{
+ "sources": {
+  "s_colettes": {
+   "name": "Colette's Cocktails",
+   "note": "Found on Instagram — recipe website",
+   "platform": "colettescocktails.com",
+   "status": "queued",
+   "ts": 1793897900000,
+   "url": "https://colettescocktails.com"
+  },
+  "s_delightfuel": {
+   "name": "Delight Fuel",
+   "note": "Found on Instagram — recipe website",
+   "platform": "delight-fuel.com",
+   "status": "queued",
+   "ts": 1793897900003,
+   "url": "https://delight-fuel.com"
+  },
+  "s_emilylaurae": {
+   "name": "Emily Laurae",
+   "note": "Already have 40 of her drinks — import the rest of the cocktails category",
+   "platform": "emilylaurae.com",
+   "status": "queued",
+   "ts": 1793897900005,
+   "url": "https://emilylaurae.com/category/all-recipes/cocktails/"
+  },
+  "s_gimletsandgardens": {
+   "name": "Gimlets and Gardens",
+   "note": "Linktree — follow it to their recipe site/blog; if recipes only live on Instagram, switch to add-by-hand",
+   "platform": "linktr.ee",
+   "status": "queued",
+   "ts": 1793897900006,
+   "url": "https://linktr.ee/gimletsandgardens"
+  },
+  "s_jackthebartender": {
+   "name": "Jack the Bartender",
+   "note": "Found on Instagram — recipe website",
+   "platform": "jackthebartender.com",
+   "status": "queued",
+   "ts": 1793897900001,
+   "url": "https://jackthebartender.com"
+  },
+  "s_mindfulmocktail": {
+   "name": "The Mindful Mocktail",
+   "note": "Already have 32 of their drinks — import the rest from the site",
+   "platform": "mindfulmocktail.com",
+   "status": "queued",
+   "ts": 1793897900002,
+   "url": "https://mindfulmocktail.com"
+  },
+  "s_spiritedla": {
+   "name": "Spirited LA",
+   "note": "Original cocktail recipes category",
+   "platform": "spiritedla.com",
+   "status": "queued",
+   "ts": 1793897900004,
+   "url": "https://spiritedla.com/category/original-cocktail-recipes/"
+  },
+  "s_uglygarnish": {
+   "name": "Ugly Garnish (@uglygarnish)",
+   "note": "Instagram only — add their drinks by hand (paste caption + link)",
+   "platform": "Instagram",
+   "status": "manual",
+   "ts": 1793897900007,
+   "url": "https://www.instagram.com/uglygarnish/"
+  }
+ },
+ "prepedits": {
+  "15e53f6947e6": {
+   "name": "Pre-Batched Pumpkin Spice Mix",
+   "occasions": [
+    "Halloween",
+    "Oktoberfest"
+   ],
+   "removed": [],
+   "ts": 1793902006704
+  }
+ }
+}
