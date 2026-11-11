@@ -3408,6 +3408,7 @@ function specClean(s) {
     .replace(/\s+/g, " ")
     .replace(/(\d)\s+(\d\/\d)/g, "$1 $2")
     .replace(/(\d)(oz|ml|cl)\b/gi, "$1 $2")
+    .replace(/^\.(\d)/, "0.$1")
     .trim();
 }
 function specTitle(t) {
@@ -3418,7 +3419,20 @@ function specTitle(t) {
     .replace(/\b(cocktail recipe|recipe|\(?shorts\)?|full video.*)$/i, "")
     .replace(/[!?.:]+$/, "").replace(/\s+/g, " ").trim();
 }
+function specNiceAmount(line) {
+  return line.replace(/^(\d*)[.,](\d+)(?=\s*(?:oz|ounces?|cups?|tsp|tbsp)\b)/i, (m, w, f) => {
+    const v = parseFloat("0." + f), whole = w ? parseInt(w, 10) : 0;
+    const map = [[0, ""], [0.125, "1/8"], [0.25, "1/4"], [0.333, "1/3"], [0.5, "1/2"], [0.667, "2/3"], [0.75, "3/4"]];
+    const hit = map.find(([x]) => Math.abs(x - v) < 0.02);
+    if (!hit) return m.startsWith(".") ? "0" + m : m;
+    return hit[1] ? (whole ? whole + " " + hit[1] : hit[1]) : String(whole);
+  });
+}
 function specAmountFirst(line) {
+  const r = specAmountFirst0(line);
+  return r ? specNiceAmount(r) : r;
+}
+function specAmountFirst0(line) {
   if (SPEC_AMT_START.test(line)) return line;
   const m = line.match(SPEC_AMT_END);
   if (m && !SPEC_VERB.test(line)) return `${m[2]} ${m[1].replace(/[-–:,]\s*$/, "").trim()}`;
@@ -3525,6 +3539,10 @@ function parseSpec(text, meta) {
   }
   if (!out.title) out.title = specTitle(titleFromText);
   if (out.prepMethod.length) out.lines.push({ text: out.prepMethod.join(" "), role: "prep" });
+  if (out.lines.some((l) => l.role === "drink" && /syrup|cordial|shrub|oleo/i.test(l.text))) {
+    out.lines.forEach((l) => { if (l.role === "drink" && /^[\d\s/.]+\s*(?:cups?|g|grams?|lbs?|pounds?|quarts?|qt)\b/i.test(l.text)) l.role = "prep"; });
+    if (!out.prepName) { const s = out.lines.find((l) => l.role === "drink" && /syrup|cordial|shrub|oleo/i.test(l.text) && !/simple|demerara|agave|maple syrup|honey/i.test(l.text)); if (s && out.lines.some((l) => l.role === "prep")) out.prepName = s.text.replace(/^[\d\s/.]+\s*(?:oz|ml|cl|tsp|tbsp|dashes?|barspoons?)?\s*/i, "").replace(/\b\w/g, (c) => c.toUpperCase()); }
+  }
   const drinkIng = out.lines.filter((l) => l.role === "drink").map((l) => l.text);
   const parts = [];
   if (out.method.length) parts.push(out.method.join(" "));

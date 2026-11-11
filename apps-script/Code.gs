@@ -160,19 +160,33 @@ function fetchLink_(url) {
   if (/youtube\.com|youtu\.be/.test(host)) {
     const id = (url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/) || [])[1];
     if (!id) throw new Error("no video id");
-    const page = get_("https://www.youtube.com/watch?v=" + id + "&hl=en");
-    let text = "", title = "", author = "";
+    let text = "", title = "", author = "", how = [];
+    for (const client of [{ clientName: "WEB", clientVersion: "2.20241101.00.00" }, { clientName: "ANDROID", clientVersion: "19.09.37", androidSdkVersion: 30 }, { clientName: "IOS", clientVersion: "19.09.3" }]) {
+      if (text) break;
+      const r = UrlFetchApp.fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+        method: "post", contentType: "application/json", muteHttpExceptions: true, headers: UA_,
+        payload: JSON.stringify({ videoId: id, context: { client: Object.assign({ hl: "en", gl: "US" }, client) } }),
+      });
+      how.push(client.clientName + ":" + r.getResponseCode());
+      if (r.getResponseCode() !== 200) continue;
+      try {
+        const v = (JSON.parse(r.getContentText()).videoDetails) || {};
+        text = v.shortDescription || ""; title = title || v.title || ""; author = author || v.author || "";
+      } catch (e) {}
+    }
+    const page = text ? { text: "" } : get_("https://www.youtube.com/watch?v=" + id + "&hl=en");
     const d = page.text.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
-    if (d) { try { text = JSON.parse('"' + d[1] + '"'); } catch (e) {} }
-    const t = page.text.match(/"videoDetails":\{[^}]*?"title":"((?:[^"\\]|\\.)*)"/);
-    if (t) { try { title = JSON.parse('"' + t[1] + '"'); } catch (e) {} }
-    const a = page.text.match(/"ownerChannelName":"((?:[^"\\]|\\.)*)"/) || page.text.match(/"author":"((?:[^"\\]|\\.)*)"/);
-    if (a) { try { author = JSON.parse('"' + a[1] + '"'); } catch (e) {} }
+    if (!text && d) { try { text = JSON.parse('"' + d[1] + '"'); } catch (e) {} }
+    if (!text) text = meta_(page.text, "og:description") || meta_(page.text, "description");
+    const t = !title && page.text.match(/"videoDetails":\{[^}]*?"title":"((?:[^"\\]|\\.)*)"/);
+    if (t && !title) { try { title = JSON.parse('"' + t[1] + '"'); } catch (e) {} }
+    const a = !author && page.text.match(/"ownerChannelName":"((?:[^"\\]|\\.)*)"/) || page.text.match(/"author":"((?:[^"\\]|\\.)*)"/);
+    if (a && !author) { try { author = JSON.parse('"' + a[1] + '"'); } catch (e) {} }
     if (!title || !author) {
       const o = get_("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent("https://www.youtube.com/watch?v=" + id));
       if (o.code === 200) { const j = JSON.parse(o.text); title = title || j.title; author = author || j.author_name; }
     }
-    return { platform: "YouTube", title: title, author: author, text: text };
+    return { platform: "YouTube", title: title, author: author, text: text, how: how.join(" ") };
   }
 
   if (/tiktok\.com/.test(host)) {
