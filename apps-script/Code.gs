@@ -60,6 +60,10 @@ function doPost(e) {
   const code = String(ss.getSheetByName("Settings").getRange("B1").getValue()).trim();
   if (!code || String(body.passcode || "").trim() !== code) return json_({ ok: false, error: "bad_passcode" });
   if (body.action === "check") return json_({ ok: true });
+  if (body.action === "fetch") {
+    try { return json_(Object.assign({ ok: true }, fetchLink_(String(body.url || "")))); }
+    catch (err) { return json_({ ok: false, error: "fetch_failed", detail: String(err).slice(0, 200) }); }
+  }
 
   const path = String(body.path || "");
   const parts = path.split("/");
@@ -104,4 +108,107 @@ function mirrorDrink_(ss, id, d, who, now) {
   }
   if (at >= 0) sh.getRange(at + 2, 1, 1, ADDED_HEADERS.length).setValues([values]);
   else sh.appendRow(values);
+}
+
+// ---------- Link reader: pulls title, creator and caption/description from a post ----------
+const UA_ = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "en-US,en;q=0.9" };
+
+function get_(url) {
+  const r = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true, headers: UA_ });
+  return { code: r.getResponseCode(), text: r.getContentText() };
+}
+function decodeEntities_(s) {
+  return String(s || "").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+}
+function meta_(html, prop) {
+  const m = html.match(new RegExp('<meta[^>]+(?:property|name)=["\']' + prop + '["\'][^>]+content=["\']([^"\']*)', "i"))
+    || html.match(new RegExp('<meta[^>]+content=["\']([^"\']*)["\'][^>]+(?:property|name)=["\']' + prop + '["\']', "i"));
+  return m ? decodeEntities_(m[1]) : "";
+}
+function stripHtml_(h) {
+  return decodeEntities_(String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|li|div|h\d)>/gi, "\n").replace(/<[^>]+>/g, "")).replace(/\n{3,}/g, "\n\n").trim();
+}
+function jsonLdRecipe_(html) {
+  const blocks = html.match(/<script[^>]+application\/ld\+json[^>]*>[\s\S]*?<\/script>/gi) || [];
+  for (const b of blocks) {
+    let data;
+    try { data = JSON.parse(b.replace(/^<script[^>]*>/i, "").replace(/<\/script>$/i, "")); } catch (e) { continue; }
+    const stack = [data];
+    while (stack.length) {
+      const x = stack.pop();
+      if (!x || typeof x !== "object") continue;
+      if (Array.isArray(x)) { x.forEach((y) => stack.push(y)); continue; }
+      const t = [].concat(x["@type"] || []);
+      if (t.indexOf("Recipe") >= 0) {
+        const steps = [];
+        const walk = (s) => { if (!s) return; if (typeof s === "string") steps.push(stripHtml_(s)); else if (Array.isArray(s)) s.forEach(walk); else if (s.itemListElement) walk(s.itemListElement); else if (s.text) steps.push(stripHtml_(s.text)); };
+        walk(x.recipeInstructions);
+        const author = [].concat(x.author || [])[0];
+        return { title: x.name || "", author: author ? (author.name || String(author)) : "", ingredients: [].concat(x.recipeIngredient || []).map(stripHtml_), instructions: steps, text: stripHtml_(x.description || "") };
+      }
+      if (x["@graph"]) stack.push(x["@graph"]);
+    }
+  }
+  return null;
+}
+
+function fetchLink_(url) {
+  if (!/^https?:\/\//i.test(url)) throw new Error("not a link");
+  const host = url.toLowerCase();
+
+  if (/youtube\.com|youtu\.be/.test(host)) {
+    const id = (url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/) || [])[1];
+    if (!id) throw new Error("no video id");
+    const page = get_("https://www.youtube.com/watch?v=" + id + "&hl=en");
+    let text = "", title = "", author = "";
+    const d = page.text.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+    if (d) { try { text = JSON.parse('"' + d[1] + '"'); } catch (e) {} }
+    const t = page.text.match(/"videoDetails":\{[^}]*?"title":"((?:[^"\\]|\\.)*)"/);
+    if (t) { try { title = JSON.parse('"' + t[1] + '"'); } catch (e) {} }
+    const a = page.text.match(/"ownerChannelName":"((?:[^"\\]|\\.)*)"/) || page.text.match(/"author":"((?:[^"\\]|\\.)*)"/);
+    if (a) { try { author = JSON.parse('"' + a[1] + '"'); } catch (e) {} }
+    if (!title || !author) {
+      const o = get_("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent("https://www.youtube.com/watch?v=" + id));
+      if (o.code === 200) { const j = JSON.parse(o.text); title = title || j.title; author = author || j.author_name; }
+    }
+    return { platform: "YouTube", title: title, author: author, text: text };
+  }
+
+  if (/tiktok\.com/.test(host)) {
+    const o = get_("https://www.tiktok.com/oembed?url=" + encodeURIComponent(url));
+    if (o.code !== 200) return { platform: "TikTok", title: "", author: "", text: "" };
+    const j = JSON.parse(o.text);
+    return { platform: "TikTok", title: "", author: j.author_unique_id ? "@" + j.author_unique_id : j.author_name || "", text: j.title || "" };
+  }
+
+  if (/instagram\.com/.test(host)) {
+    const code = (url.match(/instagram\.com\/(?:[\w.]+\/)?(?:p|reel|reels|tv)\/([\w-]+)/) || [])[1];
+    let text = "", author = "";
+    if (code) {
+      const e = get_("https://www.instagram.com/p/" + code + "/embed/captioned/");
+      if (e.code === 200) {
+        const cap = e.text.match(/<div class="Caption"[^>]*>([\s\S]*?)<div class="CaptionComments"/i) || e.text.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/i);
+        if (cap) {
+          let c = cap[1].replace(/<a[^>]+class="CaptionUsername"[^>]*>([\s\S]*?)<\/a>/i, (m, u) => { author = "@" + stripHtml_(u); return ""; });
+          text = stripHtml_(c);
+        }
+        if (!author) { const u = e.text.match(/class="UsernameText"[^>]*>([^<]+)</i); if (u) author = "@" + u[1].trim(); }
+      }
+    }
+    return { platform: "Instagram", title: "", author: author, text: text };
+  }
+
+  const page = get_(url);
+  if (page.code >= 400) throw new Error("page returned " + page.code);
+  const recipe = jsonLdRecipe_(page.text);
+  const site = host.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+  if (recipe) return Object.assign({ platform: site }, recipe);
+  const body = (page.text.match(/<article[\s\S]*?<\/article>/i) || page.text.match(/<main[\s\S]*?<\/main>/i) || [""])[0];
+  return {
+    platform: site,
+    title: meta_(page.text, "og:title") || stripHtml_((page.text.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || ""),
+    author: meta_(page.text, "author") || meta_(page.text, "og:site_name"),
+    text: (stripHtml_(body.replace(/<(script|style|nav|footer|header|aside|form)[\s\S]*?<\/\1>/gi, "")) || meta_(page.text, "og:description")).slice(0, 6000),
+  };
 }

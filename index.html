@@ -114,7 +114,12 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzzbivnTn4INkSbOE5MyH
     },
   };
 
-  window.CF = { unlocked: () => !!pass(), unlock: ask, who, signOut: () => { put("cf_pass", ""); } };
+  async function fetchLink(url) {
+    if (!pass()) { const ok = await ask(); if (!ok) throw new Error("not signed in"); }
+    try { return await call({ action: "fetch", url, passcode: pass() }); }
+    catch (e) { if (e.code === "bad_passcode") { put("cf_pass", ""); toast("The crew passcode changed. Sign in again."); } throw e; }
+  }
+  window.CF = { unlocked: () => !!pass(), unlock: ask, who, fetchLink, signOut: () => { put("cf_pass", ""); } };
   window.claude = {
     use: async (cap) => {
       if (cap === "db") { await load(); return API; }
@@ -920,6 +925,16 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzzbivnTn4INkSbOE5MyH
   body:not(.design-mode) #tab-add { display:none; }
   #tab-add { color: var(--accent-2); }
   .add-step { font-weight: 700; font-size: 1.02rem; margin: 0 0 0.4rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+  .add-row { display:flex; gap:0.5rem; align-items:stretch; }
+  .add-row .add-input { flex:1; min-width:0; }
+  .add-pull { margin:0.5rem 0 0.25rem; padding:0.6rem 0.8rem; border-radius:8px; background:#eef6ea; color:#24421b; font-size:0.92rem; line-height:1.45; }
+  .add-pull.bad { background:#fbf1e3; color:#5a3a0e; }
+  .add-need { margin:0 0 0.6rem; padding:0.55rem 0.8rem; border-radius:8px; background:#fbf1e3; color:#5a3a0e; font-size:0.92rem; }
+  .add-need.ok { background:#eef6ea; color:#24421b; }
+  .add-unsure { margin:0.6rem 0; padding:0.5rem 0.7rem; border:1px dashed var(--border); border-radius:8px; }
+  .add-unsure-row { display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; margin-top:0.35rem; font-size:0.9rem; }
+  .add-unsure-row span { flex:1 1 220px; }
+  .add-unsure-row .ws-btn { flex:0 0 auto; border:1px solid var(--border); border-radius:6px; padding:0.35rem 0.7rem; min-height:36px; }
   .add-step-n { display:inline-flex; align-items:center; justify-content:center; width:1.6rem; height:1.6rem; border-radius:50%; background: var(--accent-2, #4f6228); color:#fff; font-size:0.9rem; }
   .add-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; margin:0.8rem 0 1.2rem; display:grid; gap:0.4rem; }
   .add-input, #ad-raw, #ad-note { width:100%; font:inherit; font-size:0.9rem; padding:0.55rem 0.7rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); }
@@ -3193,6 +3208,7 @@ function applyCustom() {
   DRINKS = DRINKS.filter((d) => !d._custom);
   SYRUPS = SYRUPS.filter((s) => !s._custom);
   for (const [id, c] of Object.entries(CUSTOM)) {
+    if (c.needsSpecs) continue;
     const d = customToDrink(id, c);
     DRINKS.push(d);
     if (d.prep && d.prepName) SYRUPS.push({ _custom: true, id: "p_" + id, n: d.prepName, ing: d.prep, c: d.c, u: d.u });
@@ -3215,7 +3231,7 @@ async function dbSet(path, data) { const db = await getDb(); if (!db) { barToast
 async function dbDel(path) { const db = await getDb(); if (!db) return; try { await db.doc(path).delete(); } catch (e) {} }
 
 function newDraft() {
-  return { url: "", creator: "", raw: "", title: "", lines: [{ text: "", role: "drink" }], prepName: "", note: "", family: "", spirit: "", kind: "riff", riffOn: "", occasions: new Set(), signals: [], status: null, built: true };
+  return { url: "", creator: "", raw: "", title: "", lines: [{ text: "", role: "drink" }], prepName: "", note: "", family: "", spirit: "", kind: "riff", riffOn: "", occasions: new Set(), signals: [], status: null, built: true, pull: null, unsure: [], guessed: null, editId: null, raw0: "" };
 }
 
 // ---------- render ----------
@@ -3241,46 +3257,55 @@ function addCocktailHtml() {
         <button data-adrole="${i}" data-val="remove" aria-pressed="${l.role === "remove"}" title="Remove">✕</button>
       </div></div>`;
   const dupes = d.title ? DRINKS.filter((x) => !x._custom && drinkKey(x) === drinkKey({ title: d.title, id: "_" })).length : 0;
-  const mine = Object.entries(CUSTOM).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  const mine = Object.entries(CUSTOM).filter(([, c]) => !c.needsSpecs).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  const later = Object.entries(CUSTOM).filter(([, c]) => c.needsSpecs).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
   return `
   <div class="add-card">
-    <div class="add-step"><span class="add-step-n">1</span> Where it's from <span class="ed-hint">— optional, but ${SAMPLE ? "paste the caption and ✨ fills in the card for you" : "it keeps the link on the card"}</span></div>
-    <p class="ws-note">Paste a link and the caption or description (Instagram, YouTube, a website). Instagram can't be read automatically, so copy the caption from the app. Typing it yourself? Skip to step 2.</p>
-    <label class="ed-label">Link to the video or post</label>
-    <input type="url" class="add-input" id="ad-url" value="${escapeHtml(d.url)}" placeholder="https://www.instagram.com/reel/…  or  https://youtube.com/watch?v=…">
-    <label class="ed-label">Creator</label>
+    <div class="add-step"><span class="add-step-n">1</span> Paste the link</div>
+    <p class="ws-note">${CAN_PULL ? "Paste the post or video link and tap <b>Pull from link</b>: it grabs the title, creator and caption, and fills in the card below." : "Paste the link and the caption or description, then tap <b>Read the caption</b>."} Instagram usually hides captions, so if nothing comes back, copy the caption from the app and paste it in.</p>
+    <label class="ed-label" for="ad-url">Link to the video or post</label>
+    <div class="add-row"><input type="url" class="add-input" id="ad-url" value="${escapeHtml(d.url)}" placeholder="https://www.instagram.com/reel/…  or  https://youtube.com/watch?v=…">${CAN_PULL ? `<button class="save-btn" data-adpull>Pull from link</button>` : ""}</div>
+    ${d.pull ? `<div class="add-pull ${d.pull.err ? "bad" : ""}">${d.pull.html}</div>` : ""}
+    <label class="ed-label" for="ad-creator">Creator</label>
     <input type="text" class="add-input" id="ad-creator" list="ad-creators" value="${escapeHtml(d.creator)}" placeholder="e.g. @thecocktailpour">
     <datalist id="ad-creators">${creators.map((c) => `<option value="${escapeHtml(c)}">`).join("")}</datalist>
-    <label class="ed-label">Caption, description or spec</label>
-    <textarea id="ad-raw" rows="7" placeholder="Paste the whole caption — ingredients, method, syrup recipe, garnish. Messy is fine.">${escapeHtml(d.raw)}</textarea>
+    <label class="ed-label" for="ad-raw">Caption, description or spec</label>
+    <textarea id="ad-raw" rows="7" placeholder="Paste the whole caption: ingredients, method, syrup recipe, garnish. Messy is fine.">${escapeHtml(d.raw)}</textarea>
     <div class="ed-ai">
       ${SAMPLE ? `<button class="save-btn" data-adbuild>✨ Build the card</button>` : ""}
-      <button class="ws-btn" data-adhand style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">Copy caption into the spec</button>
-      ${d.status ? `<span class="${d.status.err ? "mk-miss" : "ed-hint"}">${escapeHtml(d.status.msg)}</span>` : ""}
+      <button class="ws-btn" data-adread style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">Read the caption</button>
+      ${d.url ? `<button class="ws-btn" data-adlater style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">Save link for later (Needs specs)</button>` : ""}
+      ${d.status && !d.status.foot ? `<span class="${d.status.err ? "mk-miss" : "ed-hint"}">${escapeHtml(d.status.msg)}</span>` : ""}
     </div>
   </div>
   ${d.built ? `
   <div class="add-card">
-    <div class="add-step"><span class="add-step-n">2</span> The drink <span class="ed-hint">— name and at least one ingredient, then Save</span></div>
+    <div class="add-step"><span class="add-step-n">2</span> Check the card <span class="ed-hint">— fill in anything missing, then Save</span></div>
+    ${missingHtml(d)}
     <label class="ed-label">Drink name</label>
     <input type="text" class="add-input" id="ad-title" value="${escapeHtml(d.title)}" placeholder="e.g. Rosemary & Maple Whiskey Sour">
     ${dupes ? `<div class="ed-hint">You already have ${dupes} card${dupes > 1 ? "s" : ""} with this name — this will show up as another version on that card.</div>` : ""}
     <label class="ed-label">Spec <span class="ed-hint">— In the glass, Prep (syrups/infusions), or ✕</span></label>
     <div class="ed-lines">${d.lines.map(lineRow).join("")}</div>
     <button class="bar-tag add" data-adaddline>＋ Add a line</button>
+    ${d.unsure && d.unsure.length ? `<div class="add-unsure"><div class="ed-hint">Lines from the caption I couldn't place. Add them where they belong, or ignore them:</div>${d.unsure.map((u, i) => `<div class="add-unsure-row"><span>${escapeHtml(u)}</span><button class="ws-btn" data-adun="${i}" data-to="drink">＋ Ingredient</button><button class="ws-btn" data-adun="${i}" data-to="note">＋ Method</button><button class="ws-btn no" data-adun="${i}" data-to="x" aria-label="Ignore">✕</button></div>`).join("")}</div>` : ""}
     ${d.lines.some((l) => l.role === "prep") ? `<label class="ed-label">Prep is for</label><input type="text" class="add-input" id="ad-prepname" value="${escapeHtml(d.prepName)}" placeholder="e.g. Cinnamon spiced maple syrup">` : ""}
     <label class="ed-label">Method, glass &amp; garnish <span class="ed-hint">— shows as the card's note</span></label>
     <textarea id="ad-note" rows="3">${escapeHtml(d.note)}</textarea>
     <div class="add-grid">
-      <div><label class="ed-label">Family</label><select id="ad-family" class="creator-select"><option value="">Choose…</option>${FAMILY_ORDER.map((f) => `<option ${d.family === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select></div>
-      <div><label class="ed-label">Base spirit</label><select id="ad-spirit" class="creator-select"><option value="">Choose…</option>${SPIRIT_ORDER.map((f) => `<option ${d.spirit === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select></div>
+      <div><label class="ed-label">Family${d.guessed && d.guessed.family ? ` <span class="ed-hint">(guessed)</span>` : ""}</label><select id="ad-family" class="creator-select"><option value="">Choose…</option>${FAMILY_ORDER.map((f) => `<option ${d.family === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select></div>
+      <div><label class="ed-label">Base spirit${d.guessed && d.guessed.spirit ? ` <span class="ed-hint">(guessed)</span>` : ""}</label><select id="ad-spirit" class="creator-select"><option value="">Choose…</option>${SPIRIT_ORDER.map((f) => `<option ${d.spirit === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select></div>
       <div><label class="ed-label">Classic or riff</label><select id="ad-kind" class="creator-select"><option value="riff" ${d.kind !== "classic" ? "selected" : ""}>Riff / original</option><option value="classic" ${d.kind === "classic" ? "selected" : ""}>Classic</option></select></div>
       <div><label class="ed-label">Riff on <span class="ed-hint">(optional)</span></label><input type="text" class="add-input" id="ad-riffon" value="${escapeHtml(d.riffOn)}" placeholder="e.g. Whiskey Sour"></div>
     </div>
     <label class="ed-label">Occasions</label>
     <div class="ed-occ">${OCCASIONS.map(([o]) => `<button class="chip" data-adocc="${escapeHtml(o)}" aria-pressed="${d.occasions.has(o)}">${escapeHtml(o)}</button>`).join("")}</div>
-    <div class="ed-foot" style="padding:1rem 0 0;border:none;"><button class="ws-btn" data-adreset style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">Start over</button>${d.status && d.status.err ? `<span class="mk-miss" style="align-self:center;">${escapeHtml(d.status.msg)}</span>` : ""}<button class="save-btn" data-adsave>Save cocktail</button></div>
+    <div class="ed-foot" style="padding:1rem 0 0;border:none;"><button class="ws-btn" data-adreset style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">Start over</button>${d.status && d.status.foot ? `<span class="mk-miss" style="align-self:center;">${escapeHtml(d.status.msg)}</span>` : ""}<button class="save-btn" data-adsave>${d.editId ? "Save changes" : "Save cocktail"}</button></div>
   </div>` : ""}
+  ${later.length ? `<div class="group-heading">Needs specs <span class="group-heading-count">(${later.length})</span></div>
+    <p class="ws-note">Saved links with no recipe yet. Watch the video, then tap Add specs.</p>
+    <div class="ws-list">${later.map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title || "Untitled")}</b><div class="sub">${escapeHtml(c.creator || platformOf(c.url))}${c.by ? ` · saved by ${escapeHtml(c.by)}` : ""}</div></div>
+      <a class="ws-btn" href="${escapeHtml(c.url)}" target="_blank" rel="noopener">▶ Watch</a><button class="ws-btn" data-adspec="${escapeHtml(id)}">Add specs</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Delete</button></div>`).join("")}</div>` : ""}
   ${mine.length ? `<div class="group-heading">Cocktails you've added <span class="group-heading-count">(${mine.length})</span></div>
     <div class="ws-list">${mine.map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title)}</b><div class="sub">${escapeHtml(c.creator || "")}${c.url ? ` · <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(platformOf(c.url))} ↗</a>` : ""}</div></div>
       <button class="ws-btn" data-adfind="${escapeHtml(c.title)}">Find it</button><button class="ws-btn" data-edit="${escapeHtml(id)}">✏️ Edit</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Delete</button></div>`).join("")}</div>` : ""}`;
@@ -3361,14 +3386,247 @@ Reply with JSON only:
   }
   renderAdd();
 }
+// ---------- Spec reader: turns a caption / description into ingredients, preps and method (no AI) ----------
+const SPEC_FRAC = { "½": "1/2", "¼": "1/4", "¾": "3/4", "⅓": "1/3", "⅔": "2/3", "⅛": "1/8" };
+const SPEC_UNIT = "(?:oz|ounces?|fl\\.? ?oz|ml|cl|l|tsp|teaspoons?|tbsp|tablespoons?|cups?|c\\b|dash(?:es)?|drops?|bar ?spoons?|bsp|parts?|g|grams?|pinch(?:es)?|sprigs?|leaves|slices?|wedges?|pieces?|whole|large|small|scoops?|shots?|jiggers?|splash(?:es)?|lbs?|pounds?|quarts?|qt|pints?|bottles?|cans?|sticks?|pods?|stalks?)";
+const SPEC_QTY = "(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:[.,]\\d+)?(?:\\s*-\\s*\\d+(?:[.,]\\d+)?)?|one|two|three|four|five|six|half|a few|a couple(?: of)?|a|an)";
+const SPEC_AMT_START = new RegExp("^(?:" + SPEC_QTY + "\\s*" + SPEC_UNIT + "\\b|\\d|top(?: up)?(?: with)?\\b|splash\\b|dash(?:es)?\\b|rinse\\b|float\\b|pinch\\b|barspoon\\b|bar spoon\\b|a few\\b|few\\b|fill\\b(?=.*\\b(?:soda|tonic|beer|prosecco|champagne|water)))", "i");
+const SPEC_AMT_END = new RegExp("^(.+?)\\s*[-–:,]?\\s*\\(?(" + SPEC_QTY + "\\s*" + SPEC_UNIT + ")\\)?\\.?$", "i");
+const SPEC_VERB = /^(?:then\s+|next\s+|finally\s+|\d+[.)]\s*)?(shake|stir|strain|double[- ]strain|fine[- ]strain|add|combine|pour|build|garnish|serve|express|muddle|dry[- ]shake|reverse[- ]dry|whip|fill|rim|blend|simmer|steep|chill|let|bring|heat|remove|bottle|store|mix|place|cut|slice|zest|peel|infuse|cook|boil|dissolve|whisk|pulse|top|float|layer|spray|mist|enjoy|cheers|in a|into a|using|once|after|keep|refrigerate|lightly|gently|quickly|torch|smoke|dip|squeeze|discard|pour)\b/i;
+const SPEC_INGR_WORD = /\b(gin|vodka|rum|tequila|mezcal|whiske?y|bourbon|rye|scotch|brandy|cognac|amaro|aperol|campari|vermouth|liqueur|cordial|syrup|simple|bitters|juice|lime|lemon|orange|grapefruit|soda|tonic|ginger beer|ginger ale|prosecco|champagne|cava|wine|sherry|port|chartreuse|absinthe|falernum|orgeat|grenadine|honey|agave|maple|cream|milk|egg|aquafaba|coffee|espresso|tea|cola|water|salt|saline|sugar|mint|basil|rosemary|thyme|cucumber|ice cream|purée|puree|nectar|shrub|tincture)\b/i;
+const SPEC_JUNK = /(https?:\/\/|www\.|link in (?:my )?bio|subscribe|follow (?:me|us|for|@)|turn on notifications|patreon|merch|affiliate|use code|discount code|promo code|shop (?:my|our|the)|sponsored|#ad\b|\bad\b:|giveaway|^\d{1,2}:\d{2}\b|like and share|save this|share this|tag a friend|comment below|let me know|check out|click|available at|amazon|music:|song:|filmed|camera|instagram:|tiktok:|facebook:|twitter:|website:|email:|business inquiries|disclaimer|please drink responsibly)/i;
+const SPEC_GLASS = /\b(coupe|nick ?(?:&|and) ?nora|rocks glass|double rocks|old fashioned glass|highball|collins glass|martini glass|flute|wine glass|tiki mug|copper mug|julep cup|snifter|mug|hurricane glass|shot glass|pint glass|tumbler)\b/i;
+const SPEC_PREP_HEAD = /^(?:for (?:the )?|to make (?:the )?|how to make (?:the )?)?(.{2,60}?\b(?:syrup|cordial|shrub|oleo(?: saccharum)?|infusion|infused [a-z ]+|tincture|foam|batch|cream|mix|puree|purée|reduction|liqueur|brine|salt|sugar|rim|garnish))\s*(?:recipe)?\s*[:\-–]?\s*$/i;
+
+function specClean(s) {
+  s = String(s || "");
+  for (const [k, v] of Object.entries(SPEC_FRAC)) s = s.split(k).join(" " + v + " ");
+  return s
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, " ")
+    .replace(/^[\s\-–—•·*▪▫◦●○►▶➤→✓✔︎☑️>]+/, "")
+    .replace(/^\(?[a-z]\)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/(\d)\s+(\d\/\d)/g, "$1 $2")
+    .replace(/(\d)(oz|ml|cl)\b/gi, "$1 $2")
+    .trim();
+}
+function specTitle(t) {
+  return String(t || "")
+    .replace(/#\S+/g, "").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/\s[|•–—-]\s.*$/, "")
+    .replace(/^(how to make (?:a |an |the )?|recipe for (?:a |an |the )?|the perfect |my )/i, "")
+    .replace(/\b(cocktail recipe|recipe|\(?shorts\)?|full video.*)$/i, "")
+    .replace(/[!?.:]+$/, "").replace(/\s+/g, " ").trim();
+}
+function specAmountFirst(line) {
+  if (SPEC_AMT_START.test(line)) return line;
+  const m = line.match(SPEC_AMT_END);
+  if (m && !SPEC_VERB.test(line)) return `${m[2]} ${m[1].replace(/[-–:,]\s*$/, "").trim()}`;
+  return null;
+}
+function guessSpirit(ing) {
+  const t = ing.join(" | ").toLowerCase();
+  const found = new Set();
+  if (/bourbon|\brye\b|whisk|scotch/.test(t)) found.add("Whiskey");
+  if (/\bgin\b/.test(t)) found.add("Gin");
+  if (/\brum\b|cachaça|cachaca/.test(t)) found.add("Rum");
+  if (/tequila|mezcal/.test(t)) found.add("Tequila/Mezcal");
+  if (/vodka/.test(t)) found.add("Vodka");
+  if (/brandy|cognac|armagnac|calvados|applejack|pisco/.test(t)) found.add("Brandy/Cognac");
+  if (found.size > 1) return "Multi-Spirit";
+  if (found.size === 1) return [...found][0];
+  if (/amaro|campari|aperol|vermouth|sherry|fernet|cynar|\bport\b/.test(t)) return "Amaro/Fortified";
+  if (/\b(na|non-alcoholic|zero[- ]proof|alcohol[- ]free|mocktail)\b/.test(t)) return "NA/Zero-Proof";
+  return "";
+}
+function guessFamily(ing, method) {
+  const t = (ing.join(" | ") + " | " + method).toLowerCase();
+  const citrus = /lemon|lime|grapefruit|yuzu/.test(t), fizzy = /soda|tonic|ginger beer|ginger ale|cola|sparkling water/.test(t);
+  if (/hot water|hot coffee|hot milk|hot tea|hot cider|mulled|toddy/.test(t)) return "Hot Drinks";
+  if (/espresso|cold brew/.test(t) || /coffee/.test(t.replace(/coffee liqueur/g, ""))) return "Coffee";
+  if (/eggnog|egg nog|whole egg|\bflip\b/.test(t)) return "Flips & Eggnog";
+  if (/prosecco|champagne|cava|sparkling wine/.test(t)) return "Sparkling & Aperitif";
+  if (/\bshot\b|shooter/.test(t)) return "Shots & Shooters";
+  if (/cream|milk|ice cream|half and half|half & half/.test(t) && !/cream of coconut/.test(t)) return "Creamy & Dessert";
+  if (/orgeat|falernum|pineapple|passion|coconut|tiki/.test(t)) return "Tiki & Tropical";
+  if (fizzy && citrus && /egg white|gin fizz|collins/.test(t)) return "Fizzes & Collinses";
+  if (fizzy) return "Highballs & Mules";
+  if (citrus) return "Sours";
+  if (/stir|vermouth|bitters/.test(t)) return /campari|amaro|fernet|cynar|aperol/.test(t) ? "Amaro & Bitter-Forward" : "Stirred & Spirit-Forward";
+  return "";
+}
+
+// text: caption/description. meta: {title, author, ingredients[], instructions[]} from a link (optional)
+function parseSpec(text, meta) {
+  meta = meta || {};
+  const out = { title: specTitle(meta.title || ""), creator: meta.author || "", lines: [], prepName: "", method: [], prepMethod: [], glass: "", garnish: "", unsure: [] };
+  // Structured recipe data (recipe websites) is the most reliable source.
+  if (Array.isArray(meta.ingredients) && meta.ingredients.length) {
+    meta.ingredients.forEach((x) => { const s = specClean(x); if (s) out.lines.push({ text: (specAmountFirst(s) || s).replace(/\.$/, ""), role: "drink" }); });
+    (meta.instructions || []).forEach((x) => { const s = specClean(x); if (s) out.method.push(s); });
+  }
+  let mode = "drink", seenIngredient = out.lines.length > 0, titleFromText = "", afterHeader = false;
+  const amtLike = (x) => !!specAmountFirst(x) || /^top(?: up)?(?: with)?\b/i.test(x);
+  const raw = String(text || "").replace(/\r/g, "").split(/\n|(?<=[a-z)]\.)\s+(?=[A-Z])/);
+  const rows = [];
+  raw.forEach((r) => {
+    // "Ingredients: 2 oz gin, 1 oz lime, 3/4 oz simple" → split on commas when it holds several amounts
+    const m = r.match(/^\s*(?:ingredients?|you(?:'ll)? need|what you need|spec)\s*[:\-–]\s*(.+)$/i);
+    const body = m ? m[1] : r;
+    if ((body.match(/\d\s*(?:oz|ml|cl|dash|tsp|tbsp)/gi) || []).length >= 2 && /,|;| \| /.test(body)) body.split(/,|;| \| /).forEach((x, i) => {
+      const lead = i === 0 && x.match(/^(.*?[a-z!?)].*?)\s+((?:\d+\s+\d\/\d|\d+\/\d|\d+(?:[.,]\d+)?)\s*(?:oz|ml|cl)\b.*)$/i);
+      if (lead && !/\d/.test(lead[1])) rows.push(lead[1], lead[2]); else rows.push(x);
+    });
+    else rows.push(m ? "Ingredients:" : r, ...(m ? [m[1]] : []));
+  });
+  for (let r of rows) {
+    const line = specClean(r);
+    if (!line || line.length < 2) continue;
+    if (/^(#\S+\s*)+$/.test(line) || /^(@\S+\s*)+$/.test(line) || SPEC_JUNK.test(line)) continue;
+    const noTags = line.replace(/#\S+/g, "").trim();
+    if (!noTags) continue;
+    if (/^(ingredients?|you(?:'ll)? need|what you need|spec|recipe|the spec)\s*[:\-–]?$/i.test(noTags)) { mode = "drink"; afterHeader = true; continue; }
+    if (/^(method|instructions?|directions?|steps?|how to(?: make it)?|preparation|to make|build)\s*[:\-–]?$/i.test(noTags)) { mode = "method"; continue; }
+    const gm = noTags.match(/^garnish(?:ed)?(?: with)?\s*[:\-–]?\s*(.+)$/i);
+    if (gm) { out.garnish = gm[1].replace(/\.$/, ""); continue; }
+    const glm = noTags.match(/^(?:glass(?:ware)?|serve(?:d)? in)\s*[:\-–]?\s*(.+)$/i);
+    if (glm) { out.glass = glm[1].replace(/\.$/, ""); continue; }
+    const ph = noTags.match(SPEC_PREP_HEAD);
+    if (ph && !SPEC_AMT_START.test(noTags) && seenIngredient) { mode = "prep"; out.prepName = out.prepName || ph[1].replace(/^(the|a|an)\s+/i, "").replace(/\b\w/g, (c) => c.toUpperCase()); continue; }
+    const amt = specAmountFirst(noTags);
+    const isVerb = SPEC_VERB.test(noTags);
+    if (/^top(?: up)?(?: with)?\b/i.test(noTags) && noTags.split(" ").length <= 6) {
+      out.lines.push({ text: noTags.replace(/^top(?: up)? with/i, "Top with"), role: mode.startsWith("prep") ? "prep" : "drink" }); seenIngredient = true; continue;
+    }
+    if (amt && !(isVerb && noTags.split(" ").length > 7)) {
+      out.lines.push({ text: amt.replace(/[.!]+$/, ""), role: mode.startsWith("prep") ? "prep" : "drink" });
+      seenIngredient = true;
+      if (mode === "method") mode = "drink";
+      if (mode === "prepmethod") mode = "prep";
+      continue;
+    }
+    if (isVerb || noTags.split(" ").length > 8) {
+      if (!seenIngredient && !isVerb) { if (!titleFromText && noTags.split(" ").length <= 8) titleFromText = noTags; else out.unsure.push(noTags); continue; }
+      (mode.startsWith("prep") ? out.prepMethod : out.method).push(/[.!?]$/.test(noTags) ? noTags : noTags + ".");
+      const g = noTags.match(SPEC_GLASS); if (g && !out.glass) out.glass = g[1];
+      const gw = noTags.match(/garnish(?:ed)? with (?:an? |the )?([^.,;]+)/i); if (gw && !out.garnish) out.garnish = gw[1];
+      continue;
+    }
+    if (!seenIngredient && !afterHeader && !amtLike(noTags) && noTags.split(" ").length <= 8 && !/[:]$/.test(noTags)) {
+      if (!titleFromText && !out.title) titleFromText = noTags;
+      else { const k = (x) => String(x).toLowerCase().replace(/[^a-z]/g, "").replace(/and/g, ""); if (k(specTitle(noTags)) !== k(out.title || titleFromText)) out.unsure.push(noTags); }
+      continue;
+    }
+    if (mode !== "method" && SPEC_INGR_WORD.test(noTags) && noTags.split(" ").length <= 6) {
+      out.lines.push({ text: noTags, role: mode.startsWith("prep") ? "prep" : "drink" }); seenIngredient = true; continue;
+    }
+    if (!seenIngredient && !titleFromText && noTags.split(" ").length <= 8) { titleFromText = noTags; continue; }
+    out.unsure.push(noTags);
+  }
+  if (!out.title) out.title = specTitle(titleFromText);
+  if (out.prepMethod.length) out.lines.push({ text: out.prepMethod.join(" "), role: "prep" });
+  const drinkIng = out.lines.filter((l) => l.role === "drink").map((l) => l.text);
+  const parts = [];
+  if (out.method.length) parts.push(out.method.join(" "));
+  if (out.glass && !parts.join(" ").toLowerCase().includes(out.glass.toLowerCase())) parts.push("Glass: " + out.glass + ".");
+  if (out.garnish && !/garnish/i.test(parts.join(" "))) parts.push("Garnish: " + out.garnish + ".");
+  out.note = parts.join(" ").replace(/\s+/g, " ").trim();
+  out.spirit = guessSpirit(drinkIng);
+  out.family = guessFamily(drinkIng, out.note);
+  return out;
+}
+
+const CAN_PULL = !!(window.CF && window.CF.fetchLink);
+function missingHtml(d) {
+  const need = [], nice = [];
+  if (!d.title.trim()) need.push("drink name");
+  if (!d.lines.some((l) => l.role === "drink" && l.text.trim())) need.push("ingredients");
+  if (!d.note.trim()) nice.push("method / glass / garnish");
+  if (!d.family) nice.push("family");
+  if (!d.spirit) nice.push("base spirit");
+  if (!d.url) nice.push("link");
+  if (!need.length && !nice.length) return `<div class="add-need ok">✓ Everything's filled in. Give it a once-over and Save.</div>`;
+  return `<div class="add-need">${need.length ? `<b>Still needed:</b> ${need.join(", ")}. ` : ""}${nice.length ? `<span>${need.length ? "Also helpful" : "Nice to have"}: ${nice.join(", ")}.</span>` : ""}</div>`;
+}
+function applyParsed(d, p) {
+  const hadLines = d.lines.some((l) => l.text.trim());
+  if (p.title && !d.title.trim()) d.title = p.title;
+  if (p.creator && !d.creator.trim()) d.creator = p.creator;
+  if (p.lines.length) d.lines = hadLines ? d.lines.filter((l) => l.text.trim()).concat(p.lines) : p.lines.slice();
+  if (!d.lines.length) d.lines = [{ text: "", role: "drink" }];
+  if (p.prepName && !d.prepName) d.prepName = p.prepName;
+  if (p.note && !d.note.trim()) d.note = p.note;
+  d.guessed = d.guessed || {};
+  if (p.family && !d.family) { d.family = p.family; d.guessed.family = true; }
+  if (p.spirit && !d.spirit) { d.spirit = p.spirit; d.guessed.spirit = true; }
+  d.unsure = (p.unsure || []).slice(0, 8);
+  d.signals = deriveSignals(d.lines.filter((l) => l.role === "drink").map((l) => l.text));
+  d.built = true;
+  const nIng = p.lines.filter((l) => l.role === "drink").length, nPrep = p.lines.filter((l) => l.role === "prep").length;
+  return { nIng, nPrep, hasMethod: !!p.note };
+}
+function foundSummary(r) {
+  if (!r.nIng) return "";
+  return `${r.nIng} ingredient${r.nIng > 1 ? "s" : ""}${r.nPrep ? `, a prep recipe (${r.nPrep} line${r.nPrep > 1 ? "s" : ""})` : ""}${r.hasMethod ? ", and the method" : ""}`;
+}
+function readCaption() {
+  readAddInputs();
+  const d = draft;
+  if (!d.raw.trim()) { d.status = { err: true, msg: "Paste the caption or spec first." }; return renderAdd(); }
+  const r = applyParsed(d, parseSpec(d.raw, {}));
+  d.status = r.nIng ? { msg: `Found ${foundSummary(r)}. Check step 2.` } : { err: true, msg: "Couldn't find a recipe in that text. Type the spec in step 2, or save the link for later." };
+  renderAdd();
+}
+async function pullLink() {
+  readAddInputs();
+  const d = draft;
+  if (!/^https?:\/\//i.test(d.url.trim())) { d.pull = { err: true, html: "Paste a full link first (starting with https://)." }; return renderAdd(); }
+  d.pull = { html: "Pulling from the link…" }; renderAdd();
+  let res;
+  try { res = await CF.fetchLink(d.url.trim()); }
+  catch (e) { d.pull = { err: true, html: e && e.message === "not signed in" ? "Sign in with the crew passcode to pull from links." : "Couldn't reach that link. Paste the caption below instead." }; return renderAdd(); }
+  const plat = res.platform || platformOf(d.url);
+  const text = (res.text || "").trim();
+  if (text && !d.raw.trim()) d.raw = text;
+  const r = applyParsed(d, parseSpec(text, res));
+  const got = [res.title || d.title ? "title" : "", res.author ? "creator" : "", text ? (plat === "YouTube" ? "description" : "caption") : ""].filter(Boolean);
+  const and = (xs) => xs.length > 1 ? xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1] : xs.join("");
+  let msg;
+  if (r.nIng) msg = `<b>Got it.</b> Pulled the ${and(got)} from ${escapeHtml(plat)}, and found ${foundSummary(r)}. Check step 2 and fill in anything missing.`;
+  else if (text) msg = `Pulled the ${and(got)} from ${escapeHtml(plat)}, but there's <b>no recipe in it</b>. If the spec is only in the video, add it in step 2 or tap <b>Save link for later</b>.`;
+  else if (got.length) msg = `Pulled the ${and(got)} from ${escapeHtml(plat)}, but ${escapeHtml(plat)} didn't share the ${plat === "YouTube" ? "description" : "caption"}. Paste it below, type the spec in step 2, or tap <b>Save link for later</b>.`;
+  else msg = `${escapeHtml(plat)} didn't share anything for this link${plat === "Instagram" ? " (Instagram often hides posts)" : ""}. Copy the caption from the app and paste it below, or tap <b>Save link for later</b>.`;
+  d.pull = { err: !r.nIng, html: msg };
+  renderAdd();
+}
+function saveForLater() {
+  readAddInputs();
+  const d = draft;
+  if (!d.url.trim()) { d.status = { err: true, msg: "Paste the link first." }; return renderAdd(); }
+  const id = d.editId || "c" + Date.now().toString(36);
+  const rec = { title: d.title.trim() || "Untitled (" + platformOf(d.url) + ")", creator: d.creator.trim(), url: cleanLink(d.url), ing: [], prep: [], prepName: "", note: d.raw.trim().slice(0, 1500), needsSpecs: true, ts: Date.now(), by: (window.CF && CF.who && CF.who()) || "" };
+  CUSTOM[id] = rec;
+  dbSet("custom/" + id, rec);
+  barToast(`Saved for later: ${rec.title}`, null);
+  draft = newDraft();
+  renderAdd();
+}
+function loadForSpecs(id) {
+  const c = CUSTOM[id]; if (!c) return;
+  draft = newDraft();
+  Object.assign(draft, { editId: id, url: c.url || "", creator: c.creator || "", title: /^Untitled \(/.test(c.title) ? "" : c.title, raw: c.note || "" });
+  draft.status = { msg: "Watch the video, then type the spec in step 2 and Save." };
+  renderAdd();
+  const el = document.getElementById("ad-title"); if (el) { el.scrollIntoView({ block: "center" }); el.focus(); }
+}
 function saveCustom() {
   readAddInputs();
   const d = draft;
-  if (!d.title.trim()) { d.status = { err: true, msg: "Give it a name first." }; return renderAdd(); }
+  if (!d.title.trim()) { d.status = { err: true, foot: true, msg: "Give it a name first." }; return renderAdd(); }
   const ing = d.lines.filter((l) => l.role === "drink" && l.text.trim()).map((l) => l.text.trim());
-  if (!ing.length) { d.status = { err: true, msg: "Add at least one ingredient." }; return renderAdd(); }
-  const id = "c" + Date.now().toString(36);
-  const rec = { title: d.title.trim(), creator: d.creator.trim(), url: d.url ? cleanLink(d.url) : "", ing, prep: d.lines.filter((l) => l.role === "prep" && l.text.trim()).map((l) => l.text.trim()), prepName: d.prepName.trim(), note: d.note.trim(), family: d.family, spirit: d.spirit, kind: d.kind, riffOn: d.riffOn.trim(), occasions: [...d.occasions], signals: d.signals, ts: Date.now() };
+  if (!ing.length) { d.status = { err: true, foot: true, msg: "Add at least one ingredient, or use Save link for later." }; return renderAdd(); }
+  const id = d.editId || "c" + Date.now().toString(36);
+  const rec = { title: d.title.trim(), creator: d.creator.trim(), url: d.url ? cleanLink(d.url) : "", ing, prep: d.lines.filter((l) => l.role === "prep" && l.text.trim()).map((l) => l.text.trim()), prepName: d.prepName.trim(), note: d.note.trim(), family: d.family, spirit: d.spirit, kind: d.kind, riffOn: d.riffOn.trim(), occasions: [...d.occasions], signals: d.signals, ts: Date.now(), by: (window.CF && CF.who && CF.who()) || "" };
   CUSTOM[id] = rec;
   applyCustom(); applyAllEdits(); render();
   dbSet("custom/" + id, rec);
@@ -3382,10 +3640,21 @@ function saveCustom() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-addtab],[data-adbuild],[data-adhand],[data-adrole],[data-adaddline],[data-adocc],[data-adsave],[data-adreset],[data-addel],[data-adfind],[data-srcadd],[data-srcdone],[data-srcdel],#src-copy");
+  const t = e.target.closest("[data-addtab],[data-adbuild],[data-adpull],[data-adread],[data-adlater],[data-adspec],[data-adun],[data-adhand],[data-adrole],[data-adaddline],[data-adocc],[data-adsave],[data-adreset],[data-addel],[data-adfind],[data-srcadd],[data-srcdone],[data-srcdel],#src-copy");
   if (!t) return;
   if (t.dataset.addtab) { readAddInputs(); addTab = t.dataset.addtab; return renderAdd(); }
   if (t.hasAttribute("data-adbuild")) return buildWithClaude();
+  if (t.hasAttribute("data-adpull")) return pullLink();
+  if (t.hasAttribute("data-adread")) return readCaption();
+  if (t.hasAttribute("data-adlater")) return saveForLater();
+  if (t.dataset.adspec) return loadForSpecs(t.dataset.adspec);
+  if (t.dataset.adun !== undefined) {
+    readAddInputs();
+    const u = draft.unsure.splice(+t.dataset.adun, 1)[0];
+    if (t.dataset.to === "drink") { draft.lines = draft.lines.filter((l) => l.text.trim()).concat([{ text: u, role: "drink" }]); }
+    else if (t.dataset.to === "note") draft.note = (draft.note ? draft.note + " " : "") + u;
+    return renderAdd();
+  }
   readAddInputs();
   if (t.hasAttribute("data-adhand")) { draft.built = true; if (!draft.lines.some((l) => l.text) && draft.raw) draft.lines = draft.raw.split(/\n/).map((x) => x.trim()).filter(Boolean).map((x) => ({ text: x, role: "drink" })); draft.status = null; return renderAdd(); }
   if (t.dataset.adrole !== undefined) { draft.lines[+t.dataset.adrole].role = t.dataset.val; return renderAdd(); }
