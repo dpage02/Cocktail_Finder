@@ -128,6 +128,14 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzzbivnTn4INkSbOE5MyH
   };
 })();
 
+</script><script>
+document.addEventListener("DOMContentLoaded", () => {
+  if (window.CF) return; // GitHub copy
+  const n = document.createElement("div");
+  n.style.cssText = "background:#8a2432;color:#fff;padding:10px 16px;font:15px/1.4 Inter,system-ui,sans-serif;text-align:center";
+  n.innerHTML = 'The Cocktail Finder has moved. Use <a href="https://dpage02.github.io/Cocktail_Finder/" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline">dpage02.github.io/Cocktail_Finder</a>. Drinks saved on this old copy won\'t show up there.';
+  document.body.prepend(n);
+});
 </script>
 <title>The Cocktail Finder — Workshop</title>
 <style>
@@ -925,6 +933,10 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzzbivnTn4INkSbOE5MyH
   body:not(.design-mode) #tab-add { display:none; }
   #tab-add { color: var(--accent-2); }
   .add-step { font-weight: 700; font-size: 1.02rem; margin: 0 0 0.4rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+  .search-chips { display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center; margin:0.4rem 0 0.2rem; font-size:0.85rem; }
+  .search-chips .sc-label { opacity:0.7; margin-right:0.1rem; }
+  .search-chips .sc-chip { padding:0.15rem 0.6rem; border-radius:999px; background:#eef6ea; color:#24421b; border:1px solid #cfe3c6; }
+  .search-chips .sc-chip.no { background:#fbebeb; color:#7a1d1d; border-color:#efcaca; text-decoration:line-through; }
   .add-row { display:flex; gap:0.5rem; align-items:stretch; }
   .add-row .add-input { flex:1; min-width:0; }
   .add-pull { margin:0.5rem 0 0.25rem; padding:0.6rem 0.8rem; border-radius:8px; background:#eef6ea; color:#24421b; font-size:0.92rem; line-height:1.45; }
@@ -1011,9 +1023,10 @@ const SHEET_URL = "https://script.google.com/macros/s/AKfycbzzbivnTn4INkSbOE5MyH
   <section id="panel-drinks">
     <div class="controls" id="controls">
       <div class="search-row">
-        <input type="search" id="search" placeholder="Search by drink name or ingredient — try “peppermint”, “rye”, “amaro”…" aria-label="Search drinks">
+        <input type="search" id="search" placeholder="Search a drink or ingredients — try “gin, lime, mint” or “rum, -coconut”" aria-label="Search drinks">
         <button class="filters-toggle-btn" id="filters-toggle" aria-expanded="false" aria-controls="filter-groups">⚙️ Filters</button>
       </div>
+      <div id="search-chips" class="search-chips" hidden></div>
       <div class="season-row" id="project-filter-group">
         <span class="filter-label">Season</span>
         <div class="chip-row" id="project-chips">
@@ -1354,8 +1367,54 @@ function updateFamilyChipCounts(q) {
   });
 }
 
+// Search: "gin, lime, mint" (or gin + lime) = drinks with ALL of them; "-cream" or "no cream" leaves those out.
+let _qCache = { raw: null, parsed: null };
+function parseQuery(q) {
+  if (_qCache.raw === q) return _qCache.parsed;
+  const parts = /[,+;&]|\s+and\s+|\s-\S|^-|\bno\s|\bwithout\s/.test(q) ? q.split(/\s*(?:[,+;&]|\s+and\s+)\s*/) : [q];
+  const inc = [], exc = [];
+  parts.forEach((p) => {
+    p = p.trim(); if (!p) return;
+    p.split(/\s+(?=-\S)/).forEach((x) => {
+      const m = x.match(/^(?:-|no\s+|without\s+)(.+)$/);
+      if (m) exc.push(m[1].trim()); else if (x.trim()) inc.push(x.trim());
+    });
+  });
+  _qCache = { raw: q, parsed: { inc, exc } };
+  return _qCache.parsed;
+}
 function matchesSearch(d, q) {
   if (!q) return true;
+  const { inc, exc } = parseQuery(q);
+  if (inc.length + exc.length > 1 || exc.length) {
+    return inc.every((t) => matchesTerm(d, t, true)) && !exc.some((t) => matchesIngredient(d, t, true));
+  }
+  return matchesTerm(d, inc[0] || "");
+}
+function renderSearchChips() {
+  const box = document.getElementById("search-chips"); if (!box) return;
+  const { inc, exc } = parseQuery(norm(state.q.trim()));
+  if (inc.length + exc.length < 2 && !exc.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<span class="sc-label">Has all of:</span>` + inc.map((t) => `<span class="sc-chip">${escapeHtml(t)}</span>`).join("") +
+    (exc.length ? `<span class="sc-label">without:</span>` + exc.map((t) => `<span class="sc-chip no">${escapeHtml(t)}</span>`).join("") : "");
+}
+const _wordRe = {};
+function hasWord(text, q) {
+  const re = _wordRe[q] || (_wordRe[q] = new RegExp("(^|[^a-z])" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(s|es)?([^a-z]|$)"));
+  return re.test(text);
+}
+function matchesIngredient(d, q, whole) {
+  const has = (x) => whole ? hasWord(norm(x), q) : norm(x).includes(q);
+  if (d.ing.some(has)) return true;
+  return !!(d.versions && d.versions.some((v) => v.ing.some(has)));
+}
+function matchesTerm(d, q, whole) {
+  if (!q) return true;
+  if (whole) {
+    const has = (x) => hasWord(norm(x), q);
+    return has(d.title) || has(d.video_title) || matchesIngredient(d, q, true) || !!(d.occasions && d.occasions.some(has));
+  }
   if (norm(d.title).includes(q)) return true;
   if (norm(d.video_title).includes(q)) return true;
   for (const i of d.ing) if (norm(i).includes(q)) return true;
@@ -1587,6 +1646,7 @@ document.addEventListener("click", (e) => {
 });
 
 function render() {
+  if (typeof renderSearchChips === "function") renderSearchChips();
   renderOccasionUI();
   if (typeof renderUpdatesButton === "function") renderUpdatesButton();
   renderWorkspace();
@@ -4544,6 +4604,7 @@ async function init() {
     exitSurprise();
     state.q = e.target.value;
     render();
+    renderSearchChips();
   });
 
   document.getElementById("shuffle-btn").addEventListener("click", () => {

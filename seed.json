@@ -75,5 +75,40 @@
    "removed": [],
    "ts": 1793902006704
   }
+ },
+ "custom": {
+  "cmwb8u7ak": {
+   "creator": "Jack the Bartender",
+   "family": "Highballs & Mules",
+   "ing": [
+    "1 1/2 oz white tea",
+    "1/4 oz pineapple puree",
+    "1/4 oz falernum syrup",
+    "1 dash Aromatic bitters",
+    "3/4 oz simple syrup",
+    "3/4 oz lime juice",
+    "Mint (muddled)",
+    "Club soda (to top)",
+    "Mint sprig (garnish)"
+   ],
+   "kind": "riff",
+   "note": "Muddle mint at the bottom of the glass, add the remaining ingredients and ice, then top with club soda. Stir, bringing the sugar up from the bottom of the glass, and garnish with a mint sprig.",
+   "occasions": [],
+   "prep": [],
+   "prepName": "",
+   "riffOn": "Mojito",
+   "signals": [
+    "citrus-forward",
+    "tropical-fruit",
+    "herbal-botanical",
+    "fresh-garden",
+    "sparkling"
+   ],
+   "spirit": "NA/Zero-Proof",
+   "title": "White Tea Mint Smash",
+   "ts": 1794348618860,
+   "url": "https://www.instagram.com/p/DfYXP0RhXWP/",
+   "by": ""
+  }
  }
 }
