@@ -59,7 +59,7 @@ That's the link for the crew.
 Use **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**.
 That keeps the same URL. (A brand-new deployment makes a new URL, and the site would need updating.)
 
-## Part 3: Turn on the daily channel refresh (about 5 min, once)
+## Part 3: Turn on the weekly channel refresh (about 5 min, once)
 
 This makes the sheet check every YouTube channel and recipe website on its own and pull new drinks in.
 
@@ -73,9 +73,12 @@ This makes the sheet check every YouTube channel and recipe website on its own a
 5. **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy** (same URL as before).
 
 What happens after that:
-- **Every hour** the sheet wakes up. Each channel gets checked **once a day**: new YouTube uploads, new website posts.
-- New YouTube videos come in straight away. Website posts go to the **Queue** tab and get read a batch at a time
-  (a big site like Emily Laurae's takes a few hours the first time).
+- **Every Sunday around 6 AM** the sheet checks every channel: new YouTube uploads, new website posts.
+  (Want Friday instead? In Code.gs change `REFRESH_DAY_ = "SUNDAY"` to `"FRIDAY"`, save, and run **installSchedule** again.)
+- New YouTube videos come in straight away. Website posts go to the **Queue** tab and get read a batch at a time;
+  if some are left, the sheet runs again every 10 minutes until they're done (a big site like Emily Laurae's takes
+  a couple of hours the first time), then waits for next week.
+- The first run happens right when you click Run on installSchedule, so you don't have to wait for Sunday.
 - Only drinks that aren't already in the archive come in. Website posts that aren't drink recipes are skipped.
 - On the site: drinks with a recipe show up on Drinks with a **NEW** tag (for 14 days) and in **What's new**.
   Videos with no recipe in the description go to **＋ Add a drink → New videos, no recipe**: Add specs, or Not a drink.
@@ -87,4 +90,4 @@ What happens after that:
 ## What doesn't work here (vs. the Claude version)
 
 The ✨ buttons (Build the card, note rewrites, find drinks for an occasion) need Claude, so they're
-hidden on this site. Add drinks with Pull from link, or let the daily channel refresh bring them in.
+hidden on this site. Add drinks with Pull from link, or let the weekly channel refresh bring them in.

@@ -3326,7 +3326,7 @@ function applyCustom() {
   computeSeasonFits();
   if (typeof rebuildSyrups === "function") { PREP_LINE_CACHE.clear(); rebuildSyrups(); }
 }
-// ---------- Auto-imports: new drinks the crew sheet pulls from every channel each day ----------
+// ---------- Auto-imports: new drinks the crew sheet pulls from every channel each week ----------
 let IMPORTS = {};      // id -> {title, creator, url, platform, text, ingredients[], instructions[], published, ts}
 let CHANNELS = null;   // sheet's refresh status per channel {name: {kind, creator, checked, imported, skipped, waiting, note}}
 function linkKey(u) {   // same format as dev/build_known.py and the sheet script
@@ -3477,7 +3477,7 @@ function sourcesHtml() {
   const auto = CHANNELS ? Object.entries(CHANNELS).filter(([, c]) => c.kind !== "manual").sort((a, b) => a[0].localeCompare(b[0])) : [];
   return `
   <div class="add-card">
-    <p class="ws-note">Add a creator you want in the archive. <b>YouTube channels</b> and <b>recipe websites</b> are refreshed automatically: the crew sheet checks every one once a day and pulls new drinks in (they show up on Drinks with a <span class="new-tag">NEW</span> tag). <b>Instagram/TikTok</b> creators can't be read automatically (their rules don't allow it), so they're kept as "add by hand" — use Add a cocktail for their drinks.</p>
+    <p class="ws-note">Add a creator you want in the archive. <b>YouTube channels</b> and <b>recipe websites</b> are refreshed automatically: every Sunday morning the crew sheet checks each one and pulls new drinks in (they show up on Drinks with a <span class="new-tag">NEW</span> tag). <b>Instagram/TikTok</b> creators can't be read automatically (their rules don't allow it), so they're kept as "add by hand" — use Add a cocktail for their drinks.</p>
     <div class="add-grid">
       <div><label class="ed-label">Creator name</label><input type="text" class="add-input" id="src-name" placeholder="e.g. Educated Barfly, @thecocktailpour"></div>
       <div><label class="ed-label">Channel / profile / site link</label><input type="url" class="add-input" id="src-url" placeholder="https://www.youtube.com/@…"></div>

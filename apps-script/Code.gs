@@ -5,7 +5,7 @@
  *   (Execute as: Me, Who has access: Anyone). See SETUP.md.
  *
  * Channel refresh: run installSchedule() once (see SETUP.md). After that the sheet checks every
- * YouTube channel and recipe website once a day and pulls new drinks in on its own.
+ * YouTube channel and recipe website once a week (REFRESH_DAY_) and pulls new drinks in on its own.
  *
  * Tabs it uses:
  *   Settings     B1 = crew passcode (change it any time; everyone signs in again)
@@ -243,14 +243,17 @@ function fetchLink_(url) {
 // =====================================================================================
 // ---------- Channel refresh: pulls new drinks from every channel, on a schedule ----------
 // =====================================================================================
-// installSchedule() — run once from the editor. Sets an hourly trigger for refreshChannels().
-// Each run: checks channels not checked in the last 20 hours (new YouTube uploads, new website
-// posts), then reads queued website posts until the time budget runs out. New drinks are saved
+// installSchedule() — run once from the editor. Sets a weekly trigger (REFRESH_DAY_ at REFRESH_HOUR_).
+// Each run: checks every channel (new YouTube uploads, new website posts), then reads queued website
+// posts until the time budget runs out. If posts are still waiting, it books a follow-up run in
+// 10 minutes, and keeps doing that until the queue is empty — then waits for next week. New drinks are saved
 // to Data as collection "imports"; the site turns each into a card (recipe found) or puts it on
 // the "New videos, no recipe" review list. Links already in the archive are skipped
 // (known_urls.json on the site), so nothing is imported twice.
 
 const SITE_ = "https://dpage02.github.io/Cocktail_Finder/";
+const REFRESH_DAY_ = "SUNDAY";   // change to "FRIDAY" (or any day), then run installSchedule() again
+const REFRESH_HOUR_ = 6;         // 6 AM, in the script's time zone (Project Settings)
 const RUN_BUDGET_MS_ = 4.5 * 60 * 1000;   // Apps Script stops runs at 6 minutes
 const CHANNEL_HEADERS_ = ["channel", "kind", "where", "creator name on cards", "status", "last checked", "found (total)", "imported (total)", "skipped (total)", "waiting", "note", "uploads"];
 const QUEUE_HEADERS_ = ["url", "channel", "found", "status", "detail"];
@@ -283,9 +286,19 @@ function installSchedule() {
     if (!sh) sh = ss.insertSheet(n);
     if (sh.getLastRow() === 0) { sh.appendRow(h); sh.setFrozenRows(1); sh.getRange(1, 1, 1, h.length).setFontWeight("bold"); }
   });
-  ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "refreshChannels").forEach((t) => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger("refreshChannels").timeBased().everyHours(1).create();
+  ScriptApp.getProjectTriggers().filter((t) => ["refreshChannels", "refreshFollowUp"].indexOf(t.getHandlerFunction()) >= 0).forEach((t) => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger("refreshChannels").timeBased().onWeekDay(ScriptApp.WeekDay[REFRESH_DAY_]).atHour(REFRESH_HOUR_).create();
   refreshChannels();
+}
+
+// One-off run booked by refreshChannels while website posts are still waiting to be read.
+function refreshFollowUp() {
+  ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "refreshFollowUp").forEach((t) => ScriptApp.deleteTrigger(t));
+  refreshChannels();
+}
+function bookFollowUp_() {
+  if (ScriptApp.getProjectTriggers().some((t) => t.getHandlerFunction() === "refreshFollowUp")) return;
+  ScriptApp.newTrigger("refreshFollowUp").timeBased().after(10 * 60 * 1000).create();
 }
 
 function key_(u) {
@@ -368,7 +381,7 @@ function refreshChannels() {
       const st = state[ch.name];
       if (st && String(st.vals[4]).toLowerCase() === "paused") continue;
       const last = st && st.vals[5] ? new Date(st.vals[5]).getTime() : 0;
-      if (Date.now() - last < 20 * 3600 * 1000) continue;
+      if (Date.now() - last < 3 * 86400 * 1000) continue;   // checked this week already (follow-up runs only read the queue)
       const tl = t(ch.name);
       tl.checked = true;
       const creator = ch.creator || ch.name;
@@ -459,6 +472,7 @@ function refreshChannels() {
     const status = {};
     readTab_("Channels", CHANNEL_HEADERS_.length).rows.forEach((r) => { status[r[0]] = { kind: r[1], creator: r[3], checked: r[5] ? new Date(r[5]).getTime() : 0, imported: Number(r[7] || 0), skipped: Number(r[8] || 0), waiting: Number(r[9] || 0), note: String(r[10] || "") }; });
     writeData_("meta", "channels", Object.assign({ ts: Date.now() }, { list: status }));
+    if (Object.values(waiting).some((n) => n > 0)) bookFollowUp_();
     if (summary.imported || summary.found) ss.getSheetByName("Log").appendRow([now, "auto refresh", "refresh", `found ${summary.found}, imported ${summary.imported}, skipped ${summary.skipped}`]);
   } catch (e) {
     ss.getSheetByName("Log").appendRow([new Date(), "auto refresh", "error", String(e).slice(0, 300)]);

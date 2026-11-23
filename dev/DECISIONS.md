@@ -245,3 +245,5 @@ Every change we agree on goes here. Before each new round, check this list so no
   Within each family, NEW drinks then full recipes (with amounts) sort first.
 - **Flow fixes:** phone search box no longer pushes Filters off screen (shorter placeholder on phones); source link no longer repeats the
   drink name ("Watch on YouTube ↗" instead); header drink/source counts update when new drinks arrive; intro line says "pick a season".
+- Nov 22 (later): refresh changed from daily to **weekly, Sunday ~6 AM** (Davis: "every Friday or Sunday"). `REFRESH_DAY_` in Code.gs
+  switches the day. Leftover website posts get 10-minute follow-up runs (`refreshFollowUp`) until the queue is empty.
