@@ -226,3 +226,22 @@ Every change we agree on goes here. Before each new round, check this list so no
 - Step 2 "Check the card": Still needed / Nice to have; family + spirit guessed and labeled.
 - Save link for later -> Needs specs list (▶ Watch, Add specs). Script deployment now Version 4, same URL.
 - Parked (Nov 11): nicer address. Options: free GitHub org (e.g. rallycocktails.github.io) or a custom domain. Keeping dpage02.github.io/Cocktail_Finder for the proof of concept.
+
+## Round 22 (Nov 22): channels refresh themselves + spring browsing + flow fixes
+- **Daily channel refresh in the crew sheet** (Apps Script, hourly trigger; each channel checked once a day). Claude can't
+  reach YouTube, so the sheet does it with the YouTube Data API it already had for Pull from link.
+  - YouTube: new uploads since the newest video already in the archive (latest 50). Websites: sitemap → Queue tab → read in batches;
+    only pages with a recipe card that looks like a drink. Existing sites look back 60 posts the first time; new sources import everything.
+  - Built in: 12 YouTube channels + Educated Barfly site, A Bar Above, Good Old Fashioned Lovers. Plus every source on the site's
+    Sources tab (the 7 queued sites). Instagram/TikTok/Linktree = add by hand (Gimlets & Gardens, Ugly Garnish).
+  - Never re-imports: skips links in `known_urls.json` (built by dev/build_known.py), crew-added drinks, and anything already queued.
+  - Site reads collection `imports`, runs the caption reader: recipe → card with **NEW** tag (14 days), sorted first; no recipe →
+    "New videos, no recipe in the description" (Design, ＋ Add a drink) with Watch / Add specs / Not a drink. Remove/Not a drink is
+    remembered (custom/<id> = removed). ✏️ edits work like any card. What's new groups them: "New from <creator>: N new drinks".
+  - Sources tab: Auto-refresh list (last checked, pulled in, still to read); queued sources show their auto-import status.
+  - Needs a one-time `installSchedule()` run in the sheet (SETUP.md Part 3).
+- **Spring (light touch, not a project):** pick a season → **Try** row of flavour chips (spring: strawberry, rhubarb, elderflower,
+  lychee, yuzu, cucumber, lavender, basil, hibiscus, grapefruit; also summer/fall/winter sets). Tap = search that season for it.
+  Within each family, NEW drinks then full recipes (with amounts) sort first.
+- **Flow fixes:** phone search box no longer pushes Filters off screen (shorter placeholder on phones); source link no longer repeats the
+  drink name ("Watch on YouTube ↗" instead); header drink/source counts update when new drinks arrive; intro line says "pick a season".

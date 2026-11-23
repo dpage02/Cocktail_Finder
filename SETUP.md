@@ -59,8 +59,32 @@ That's the link for the crew.
 Use **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**.
 That keeps the same URL. (A brand-new deployment makes a new URL, and the site would need updating.)
 
+## Part 3: Turn on the daily channel refresh (about 5 min, once)
+
+This makes the sheet check every YouTube channel and recipe website on its own and pull new drinks in.
+
+1. Open the crew sheet → **Extensions → Apps Script**.
+2. Select everything in **Code.gs**, delete it, and paste in the new **apps-script/Code.gs** from this repo. Save (💾).
+3. Check the left sidebar under **Services**: **YouTube Data API v3** should be listed (it was added for Pull from link).
+   If it isn't: click **＋** next to Services, pick **YouTube Data API v3**, **Add**.
+4. In the function dropdown pick **installSchedule** → **Run**. Allow the new permission if Google asks
+   (it needs "run when you're not there" for the schedule).
+   - The first run takes a few minutes. You'll get two new tabs: **Channels** and **Queue**.
+5. **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy** (same URL as before).
+
+What happens after that:
+- **Every hour** the sheet wakes up. Each channel gets checked **once a day**: new YouTube uploads, new website posts.
+- New YouTube videos come in straight away. Website posts go to the **Queue** tab and get read a batch at a time
+  (a big site like Emily Laurae's takes a few hours the first time).
+- Only drinks that aren't already in the archive come in. Website posts that aren't drink recipes are skipped.
+- On the site: drinks with a recipe show up on Drinks with a **NEW** tag (for 14 days) and in **What's new**.
+  Videos with no recipe in the description go to **＋ Add a drink → New videos, no recipe**: Add specs, or Not a drink.
+- **Channels** tab: one row per channel with when it was last checked and how many came in. To stop one,
+  type **paused** in its **status** cell. New sources added on the site's **Sources** tab are picked up automatically
+  (YouTube and websites; Instagram/TikTok stay add-by-hand).
+- Something wrong? The **Log** tab has a line for every run that found something, and any errors.
+
 ## What doesn't work here (vs. the Claude version)
 
 The ✨ buttons (Build the card, note rewrites, find drinks for an occasion) need Claude, so they're
-hidden on this site. Add drinks by hand, or paste the link and caption and the nightly job (coming next)
-will build the card.
+hidden on this site. Add drinks with Pull from link, or let the daily channel refresh bring them in.

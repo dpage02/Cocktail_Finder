@@ -289,7 +289,11 @@ document.addEventListener("DOMContentLoaded", () => {
     font-size: 0.98rem;
     font-family: inherit;
   }
+  input[type="search"] { min-width: 0; }
   input[type="search"]::placeholder { color: var(--text-muted); }
+  .new-tag { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; color: #fff; background: #2f7d4f; border-radius: 4px; padding: 0.12rem 0.4rem; margin-right: 0.3rem; }
+  .ideas-hint { font-size: 0.78rem; color: var(--text-muted); flex-basis: 100%; }
+  #ideas-chips .chip { flex: 0 0 auto; white-space: nowrap; }
   input[type="search"]:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 1px;
@@ -1006,7 +1010,7 @@ document.addEventListener("DOMContentLoaded", () => {
       <button class="mode-btn" id="btn-preview" aria-pressed="true">Preview</button>
       <button class="mode-btn" id="btn-design" aria-pressed="false">Design</button>
     </div></div>
-    <p class="subhead">The bar's working cocktail archive — browse by family, spirit, or flavor, check what you can make tonight, or switch into a seasonal project for planning ahead.</p>
+    <p class="subhead">The bar's working cocktail archive — browse by family, spirit, or flavor, check what you can make tonight, or pick a season to plan what's next.</p>
     <div class="stat-row" id="stat-row"></div>
     <div><button class="chip" id="updates-btn">What's new</button></div>
   </header>
@@ -1048,6 +1052,11 @@ document.addEventListener("DOMContentLoaded", () => {
           <summary>How seasons are rated</summary>
           <p>Every drink is scored for each season by the same engine. <strong>Great</strong> = a signature reason for that season (the season in its name, a defining ingredient like cider, eggnog, elderflower or passion fruit, or a defining style like hot drinks or tiki) and nothing fighting it. <strong>Needs a switch</strong> = clearly seasonal but one ingredient clashes; the card says what to swap. <strong>Year-round fit</strong> = works any time, no seasonal hook. <strong>Neutral</strong> = no real signal either way. <strong>Off-season</strong> = something clashes (hot or creamy in summer, tropical in winter). Garnishes and bitters never decide a tier. Hand-verified winter picks and your Yes/No decisions in Design mode always override the score.</p>
         </details>
+      </div>
+      <div class="tier-row" id="ideas-row" hidden>
+        <span class="filter-label">Try</span>
+        <div class="chip-row" id="ideas-chips"></div>
+        <span class="ideas-hint">Tap a flavour to search this season for it. Full recipes and NEW drinks show first.</span>
       </div>
       <div class="filter-groups" id="filter-groups">
         <div class="filter-group" id="naproject-group" hidden>
@@ -1486,6 +1495,8 @@ function drinkKey(d) {
   return t.trim().replace(/\s+/g, " ") || d.id;
 }
 function hasAmounts(d) { return d.ing.some((i) => /\d|½|¼|¾|dash|barspoon/i.test(i)); }
+const NEW_DAYS = 14;
+function isNewDrink(d) { return !!(d && d.ts && Date.now() - d.ts < NEW_DAYS * 864e5); }
 // collapse a list to one card per drink name; rankFn: lower = better representative
 function dedupeList(list, rankFn) {
   if (!DEDUPE) { for (const d of list) delete OTHERS_BY_ID[d.id]; return list; }
@@ -1512,9 +1523,13 @@ function cardHtml(d) {
   const shownUrl = av ? av.u : d.u;
   const shownCreator = av ? av.c : d.c;
   const ingHtml = shownIng.map((i) => `<li>${escapeHtml(i)}${prepBadge(i)}</li>`).join("");
+  // Don't repeat the drink name: when the source title is just the name, show where it's from instead
+  const vt = d.video_title || "";
+  const sameAsName = norm(vt.replace(/[↗▶]/g, "")).trim() === norm(d.title || "").trim();
+  const linkText = sameAsName ? `Watch on ${platformOf(shownUrl) || "source"} ↗` : vt;
   const sourceLink = shownUrl
-    ? `<a href="${escapeHtml(shownUrl)}" target="_blank" rel="noopener">${escapeHtml(d.video_title)}</a>`
-    : escapeHtml(d.video_title);
+    ? `<a href="${escapeHtml(shownUrl)}" target="_blank" rel="noopener">${escapeHtml(linkText)}</a>`
+    : escapeHtml(vt);
   const videoTitleRow = `<div class="video-title-row">${sourceLink}</div>`;
   const isNA = d.projects && d.projects.includes("dry-january");
   const accessClass = d.acc === "c" ? "" : "special";
@@ -1574,11 +1589,12 @@ function cardHtml(d) {
 
   const cardRating = !isNA ? activeRating(d) : undefined;
   const showRating = cardRating !== undefined;
-  const topRight = isNA
+  const newTag = isNewDrink(d) ? `<span class="new-tag" title="Added ${escapeHtml(new Date(d.ts).toLocaleDateString())}">NEW</span>` : "";
+  const topRight = newTag + (isNA
     ? `<span class="prep-pill">${escapeHtml(d.prep_level || "")}</span>`
     : showRating
     ? `<span class="rating-pill ${cardRating}">${currentRatingLabels()[cardRating]}</span>${d.holiday ? '<span class="holiday-badge" title="Holiday-coded">🎄</span>' : ''}`
-    : "";
+    : "");
 
   const footMeta = isNA
     ? winterBadge
@@ -1645,8 +1661,40 @@ document.addEventListener("click", (e) => {
   if (state.occasion) window.scrollTo({ top: document.getElementById("controls").offsetTop - 10, behavior: "smooth" });
 });
 
+// Quick flavour ideas under the Season row: tap to search the season for that flavour
+const SEASON_IDEAS = {
+  spring: ["Strawberry", "Rhubarb", "Elderflower", "Lychee", "Yuzu", "Cucumber", "Lavender", "Basil", "Hibiscus", "Grapefruit"],
+  summer: ["Watermelon", "Pineapple", "Mango", "Passion fruit", "Peach", "Coconut", "Mint", "Cucumber"],
+  fall: ["Apple", "Pear", "Pumpkin", "Maple", "Cinnamon", "Fig", "Pecan", "Cranberry"],
+  winter: ["Cranberry", "Cinnamon", "Chocolate", "Pomegranate", "Nutmeg", "Ginger", "Orange", "Eggnog"],
+};
+function renderIdeas() {
+  const row = document.getElementById("ideas-row"); if (!row) return;
+  const p = activeProject(), ideas = p && SEASON_IDEAS[p];
+  row.hidden = !ideas || !!state.occasion;
+  if (row.hidden) return;
+  const q = norm(state.q.trim());
+  document.getElementById("ideas-chips").innerHTML = ideas.map((x) => `<button class="chip" data-idea="${escapeHtml(x)}" aria-pressed="${q === norm(x)}">${escapeHtml(x)}</button>`).join("")
+    ;
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-idea]"); if (!t) return;
+  const v = norm(state.q.trim()) === norm(t.dataset.idea) ? "" : t.dataset.idea;
+  state.q = v; document.getElementById("search").value = v; exitSurprise(); render();
+});
+
+function updateStats() {
+  const el = document.getElementById("stat-row"); if (!el) return;
+  const creatorCount = new Set(DRINKS.map((d) => d.c)).size;
+  el.innerHTML = `<span><b>${DRINKS.length.toLocaleString()}</b> drinks</span>` +
+    `<span><b>${creatorCount.toLocaleString()}</b> sources</span>` +
+    `<span><b>${SYRUPS.length.toLocaleString()}</b> syrups &amp; preps</span>` +
+    `<span><b>${PROJECT_ORDER.length.toLocaleString()}</b> seasonal projects</span>`;
+}
 function render() {
   if (typeof renderSearchChips === "function") renderSearchChips();
+  updateStats();
+  renderIdeas();
   renderOccasionUI();
   if (typeof renderUpdatesButton === "function") renderUpdatesButton();
   renderWorkspace();
@@ -1702,7 +1750,8 @@ function render() {
     if (!list.length) continue;
     const remaining = MAX_RENDER - shownSoFar;
     if (remaining <= 0) break;
-    const slice = list.slice().sort((a, b) => (RATING_SORT[activeRating(a)] ?? 5) - (RATING_SORT[activeRating(b)] ?? 5)).slice(0, remaining);
+    const slice = list.slice().sort((a, b) => ((RATING_SORT[activeRating(a)] ?? 5) - (RATING_SORT[activeRating(b)] ?? 5))
+      || (isNewDrink(b) - isNewDrink(a)) || (hasAmounts(b) - hasAmounts(a))).slice(0, remaining);
     shownSoFar += slice.length;
     html += `<div class="group-heading" style="grid-column:1/-1;">${escapeHtml(g)} <span class="group-heading-count">(${list.length})</span></div>`;
     html += slice.map(cardHtml).join("");
@@ -3262,13 +3311,14 @@ function customToDrink(id, c) {
     note: c.note || "", occasions: c.occasions || [], family: c.family || "Other", spirit: c.spirit || "Unclassified",
     signals, strong_signals: signals.slice(0, 3), k: c.kind === "classic" ? "c" : "r", p: c.riffOn || "",
     acc: c.prep && c.prep.length ? "1" : "c", sp: [], ai: [], projects: ["winter", "fall", "spring", "summer"], holiday: (c.occasions || []).includes("Christmas"),
+    ts: c.ts || 0, _auto: !!c._auto,
   };
 }
 function applyCustom() {
   DRINKS = DRINKS.filter((d) => !d._custom);
   SYRUPS = SYRUPS.filter((s) => !s._custom);
   for (const [id, c] of Object.entries(CUSTOM)) {
-    if (c.needsSpecs) continue;
+    if (c.needsSpecs || c.removed) continue;
     const d = customToDrink(id, c);
     DRINKS.push(d);
     if (d.prep && d.prepName) SYRUPS.push({ _custom: true, id: "p_" + id, n: d.prepName, ing: d.prep, c: d.c, u: d.u });
@@ -3276,14 +3326,45 @@ function applyCustom() {
   computeSeasonFits();
   if (typeof rebuildSyrups === "function") { PREP_LINE_CACHE.clear(); rebuildSyrups(); }
 }
+// ---------- Auto-imports: new drinks the crew sheet pulls from every channel each day ----------
+let IMPORTS = {};      // id -> {title, creator, url, platform, text, ingredients[], instructions[], published, ts}
+let CHANNELS = null;   // sheet's refresh status per channel {name: {kind, creator, checked, imported, skipped, waiting, note}}
+function linkKey(u) {   // same format as dev/build_known.py and the sheet script
+  u = String(u || "").trim(); if (!u) return "";
+  const m = u.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/);
+  if (m && /youtube\.com|youtu\.be/i.test(u)) return "yt:" + m[1];
+  return u.replace(/^https?:\/\//i, "").toLowerCase().replace(/^www\./, "").split(/[?#]/)[0].replace(/\/+$/, "");
+}
+function importToCustom(x) {
+  const d = newDraft();
+  d.url = x.url || ""; d.creator = x.creator || "";
+  const r = applyParsed(d, parseSpec(x.text || "", { title: x.title || "", author: x.creator || "", ingredients: x.ingredients, instructions: x.instructions }));
+  const base = { title: d.title.trim() || x.title || "Untitled", creator: x.creator || d.creator, url: x.url || "", ts: x.ts || 0, by: "auto", _auto: true, published: x.published || "" };
+  if (!r.nIng) return Object.assign(base, { title: x.title || base.title, ing: [], prep: [], prepName: "", note: String(x.text || "").slice(0, 1500), needsSpecs: true });
+  return Object.assign(base, { ing: d.lines.filter((l) => l.role === "drink" && l.text.trim()).map((l) => l.text.trim()), prep: d.lines.filter((l) => l.role === "prep" && l.text.trim()).map((l) => l.text.trim()),
+    prepName: d.prepName || "", note: d.note || "", family: d.family || "", spirit: d.spirit || "", kind: "riff", riffOn: "", occasions: [], signals: d.signals || [] });
+}
+function applyImports() {
+  const known = new Set();
+  for (const d of DRINKS) { if (d._custom) continue; [d.u, ...(d.ai || []).map((a) => a.u), ...(d.versions || []).map((v) => v.u)].forEach((u) => { const k = linkKey(u); if (k) known.add(k); }); }
+  for (const c of Object.values(CUSTOM)) if (!c._auto && c.url) known.add(linkKey(c.url));
+  for (const [id, x] of Object.entries(IMPORTS)) {
+    if (CUSTOM[id] && !CUSTOM[id]._auto) continue;      // the crew already handled this one (specs added, edited or removed)
+    if (known.has(linkKey(x.url))) { delete CUSTOM[id]; continue; }
+    try { CUSTOM[id] = importToCustom(x); } catch (e) {}
+  }
+}
 async function initAdd() {
   const db = await getDb();
   if (!db) return;
   try {
-    const [c, s] = await Promise.all([db.collection("custom").get(), db.collection("sources").get()]);
+    const [c, s, im, me] = await Promise.all([db.collection("custom").get(), db.collection("sources").get(), db.collection("imports").get(), db.collection("meta").get()]);
     c.docs.forEach((x) => { CUSTOM[x.id] = x.data(); });
     s.docs.forEach((x) => { SOURCES[x.id] = x.data(); });
-    if (c.docs.length) { applyCustom(); applyAllEdits(); render(); }
+    im.docs.forEach((x) => { IMPORTS[x.id] = x.data(); });
+    me.docs.forEach((x) => { if (x.id === "channels") CHANNELS = (x.data() || {}).list || null; });
+    if (im.docs.length) applyImports();
+    if (c.docs.length || im.docs.length) { applyCustom(); applyAllEdits(); render(); }
     if (!document.getElementById("panel-add").hidden) renderAdd();
   } catch (e) {}
 }
@@ -3317,8 +3398,11 @@ function addCocktailHtml() {
         <button data-adrole="${i}" data-val="remove" aria-pressed="${l.role === "remove"}" title="Remove">✕</button>
       </div></div>`;
   const dupes = d.title ? DRINKS.filter((x) => !x._custom && drinkKey(x) === drinkKey({ title: d.title, id: "_" })).length : 0;
-  const mine = Object.entries(CUSTOM).filter(([, c]) => !c.needsSpecs).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
-  const later = Object.entries(CUSTOM).filter(([, c]) => c.needsSpecs).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  const byNew = (a, b) => (b[1].ts || 0) - (a[1].ts || 0);
+  const mine = Object.entries(CUSTOM).filter(([, c]) => !c.needsSpecs && !c.removed && !c._auto).sort(byNew);
+  const later = Object.entries(CUSTOM).filter(([, c]) => c.needsSpecs && !c.removed && !c._auto).sort(byNew);
+  const autoLater = Object.entries(CUSTOM).filter(([, c]) => c.needsSpecs && !c.removed && c._auto).sort(byNew);
+  const autoNew = Object.entries(CUSTOM).filter(([, c]) => !c.needsSpecs && !c.removed && c._auto && isNewDrink(c)).sort(byNew);
   return `
   <div class="add-card">
     <div class="add-step"><span class="add-step-n">1</span> Paste the link</div>
@@ -3366,6 +3450,14 @@ function addCocktailHtml() {
     <p class="ws-note">Saved links with no recipe yet. Watch the video, then tap Add specs.</p>
     <div class="ws-list">${later.map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title || "Untitled")}</b><div class="sub">${escapeHtml(c.creator || platformOf(c.url))}${c.by ? ` · saved by ${escapeHtml(c.by)}` : ""}</div></div>
       <a class="ws-btn" href="${escapeHtml(c.url)}" target="_blank" rel="noopener">▶ Watch</a><button class="ws-btn" data-adspec="${escapeHtml(id)}">Add specs</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Delete</button></div>`).join("")}</div>` : ""}
+  ${autoNew.length ? `<div class="group-heading">Pulled in this fortnight <span class="group-heading-count">(${autoNew.length})</span></div>
+    <p class="ws-note">New drinks the sheet found on your channels (they're on the Drinks tab with a <span class="new-tag">NEW</span> tag). Check the spec with ✏️, or Remove anything that isn't a fit.</p>
+    <div class="ws-list">${autoNew.slice(0, 60).map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title)}</b><div class="sub">${escapeHtml(c.creator || "")}${c.url ? ` · <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(platformOf(c.url))} ↗</a>` : ""}</div></div>
+      <button class="ws-btn" data-adfind="${escapeHtml(c.title)}">Find it</button><button class="ws-btn" data-edit="${escapeHtml(id)}">✏️ Edit</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Remove</button></div>`).join("")}</div>` : ""}
+  ${autoLater.length ? `<details class="auto-later"><summary class="group-heading" style="cursor:pointer;">New videos, no recipe in the description <span class="group-heading-count">(${autoLater.length})</span></summary>
+    <p class="ws-note">The sheet found these on your channels but the description has no spec. If it's a drink you want, watch it and Add specs; otherwise Not a drink.</p>
+    <div class="ws-list">${autoLater.slice(0, 80).map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title || "Untitled")}</b><div class="sub">${escapeHtml(c.creator || platformOf(c.url))}</div></div>
+      <a class="ws-btn" href="${escapeHtml(c.url)}" target="_blank" rel="noopener">▶ Watch</a><button class="ws-btn" data-adspec="${escapeHtml(id)}">Add specs</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Not a drink</button></div>`).join("")}</div></details>` : ""}
   ${mine.length ? `<div class="group-heading">Cocktails you've added <span class="group-heading-count">(${mine.length})</span></div>
     <div class="ws-list">${mine.map(([id, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(c.title)}</b><div class="sub">${escapeHtml(c.creator || "")}${c.url ? ` · <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(platformOf(c.url))} ↗</a>` : ""}</div></div>
       <button class="ws-btn" data-adfind="${escapeHtml(c.title)}">Find it</button><button class="ws-btn" data-edit="${escapeHtml(id)}">✏️ Edit</button><button class="ws-btn no" data-addel="${escapeHtml(id)}">Delete</button></div>`).join("")}</div>` : ""}`;
@@ -3377,11 +3469,15 @@ function sourcesHtml() {
   const have = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   const queued = Object.entries(SOURCES).filter(([, s]) => s.status === "queued");
   const manual = Object.entries(SOURCES).filter(([, s]) => s.status === "manual");
-  const row = ([id, s]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(s.name)}</b><div class="sub">${escapeHtml(s.platform || "")}${s.url ? ` · <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">open ↗</a>` : ""}${s.note ? ` · ${escapeHtml(s.note)}` : ""}</div></div>
-      ${s.status === "queued" ? `<button class="ws-btn yes" data-srcdone="${escapeHtml(id)}">Mark imported</button>` : ""}<button class="ws-btn no" data-srcdel="${escapeHtml(id)}">Remove</button></div>`;
+  const chOf = (s) => CHANNELS && (CHANNELS[s.name] || CHANNELS[s.name + " (website)"] || CHANNELS[s.name + " (YouTube)"]);
+  const ago = (ts) => { if (!ts) return "not checked yet"; const h = Math.round((Date.now() - ts) / 36e5); return h < 1 ? "checked just now" : h < 48 ? `checked ${h}h ago` : `checked ${Math.round(h / 24)} days ago`; };
+  const chLine = (c) => c ? [c.kind === "manual" ? "add by hand" : ago(c.checked), c.imported ? `${c.imported} pulled in` : "", c.waiting ? `${c.waiting} still to read` : "", c.note].filter(Boolean).join(" · ") : "";
+  const row = ([id, s]) => { const ch = chOf(s); return `<div class="ws-row"><div class="t"><b>${escapeHtml(s.name)}</b><div class="sub">${escapeHtml(s.platform || "")}${s.url ? ` · <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">open ↗</a>` : ""}${s.note ? ` · ${escapeHtml(s.note)}` : ""}${ch ? `<br><b>Auto-import:</b> ${escapeHtml(chLine(ch))}` : ""}</div></div>
+      ${s.status === "queued" && !ch ? `<button class="ws-btn yes" data-srcdone="${escapeHtml(id)}">Mark imported</button>` : ""}<button class="ws-btn no" data-srcdel="${escapeHtml(id)}">Remove</button></div>`; };
+  const auto = CHANNELS ? Object.entries(CHANNELS).filter(([, c]) => c.kind !== "manual").sort((a, b) => a[0].localeCompare(b[0])) : [];
   return `
   <div class="add-card">
-    <p class="ws-note">Add a creator you want in the archive. <b>YouTube channels</b> and recipe websites go on the import list — hand it to terminal Claude to run the same pipeline that built the archive. <b>Instagram/TikTok</b> creators can't be imported automatically (their rules don't allow it), so they're kept as "add by hand" — use Add a cocktail for their drinks.</p>
+    <p class="ws-note">Add a creator you want in the archive. <b>YouTube channels</b> and <b>recipe websites</b> are refreshed automatically: the crew sheet checks every one once a day and pulls new drinks in (they show up on Drinks with a <span class="new-tag">NEW</span> tag). <b>Instagram/TikTok</b> creators can't be read automatically (their rules don't allow it), so they're kept as "add by hand" — use Add a cocktail for their drinks.</p>
     <div class="add-grid">
       <div><label class="ed-label">Creator name</label><input type="text" class="add-input" id="src-name" placeholder="e.g. Educated Barfly, @thecocktailpour"></div>
       <div><label class="ed-label">Channel / profile / site link</label><input type="url" class="add-input" id="src-url" placeholder="https://www.youtube.com/@…"></div>
@@ -3390,6 +3486,9 @@ function sourcesHtml() {
     <input type="text" class="add-input" id="src-note">
     <div class="ed-foot" style="padding:0.8rem 0 0;border:none;justify-content:flex-end;"><button class="save-btn" data-srcadd>Add source</button></div>
   </div>
+  <div class="group-heading">Auto-refresh <span class="group-heading-count">(${auto.length})</span></div>
+  ${auto.length ? `<div class="ws-list">${auto.map(([n, c]) => `<div class="ws-row"><div class="t"><b>${escapeHtml(n)}</b><div class="sub">${escapeHtml(c.kind === "youtube" ? "YouTube" : "Website")} · ${escapeHtml(chLine(c))}</div></div></div>`).join("")}</div>`
+    : `<div class="ws-empty">Not switched on yet. In the crew sheet: Extensions › Apps Script › run <b>installSchedule</b> once (steps in SETUP.md).</div>`}
   <div class="group-heading">Waiting to import <span class="group-heading-count">(${queued.length})</span></div>
   ${queued.length ? `<button class="ws-btn" id="src-copy" style="margin-bottom:0.6rem;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.9rem;">📋 Copy import request for terminal Claude</button><div class="ws-list">${queued.map(row).join("")}</div>` : `<div class="ws-empty">Nothing queued.</div>`}
   ${manual.length ? `<div class="group-heading">Add by hand <span class="group-heading-count">(${manual.length})</span></div><div class="ws-list">${manual.map(row).join("")}</div>` : ""}
@@ -3765,7 +3864,12 @@ document.addEventListener("click", (e) => {
   if (t.dataset.adocc) { const o = t.dataset.adocc; draft.occasions.has(o) ? draft.occasions.delete(o) : draft.occasions.add(o); return renderAdd(); }
   if (t.hasAttribute("data-adsave")) return saveCustom();
   if (t.hasAttribute("data-adreset")) { draft = newDraft(); return renderAdd(); }
-  if (t.dataset.addel) { const id = t.dataset.addel, rec = CUSTOM[id]; delete CUSTOM[id]; applyCustom(); applyAllEdits(); render(); renderAdd(); dbDel("custom/" + id);
+  if (t.dataset.addel) { const id = t.dataset.addel, rec = CUSTOM[id];
+    if (rec._auto) {   // pulled in automatically: remember it's dismissed so the next load doesn't bring it back
+      const gone = { removed: true, title: rec.title, url: rec.url, ts: Date.now(), by: (window.CF && CF.who && CF.who()) || "" };
+      CUSTOM[id] = gone; applyCustom(); applyAllEdits(); render(); renderAdd(); dbSet("custom/" + id, gone);
+      barToast(`Removed ${rec.title}`, () => { CUSTOM[id] = rec; applyCustom(); applyAllEdits(); render(); renderAdd(); dbDel("custom/" + id); }); return; }
+    delete CUSTOM[id]; applyCustom(); applyAllEdits(); render(); renderAdd(); dbDel("custom/" + id);
     barToast(`Deleted ${rec.title}`, () => { CUSTOM[id] = rec; applyCustom(); applyAllEdits(); render(); renderAdd(); dbSet("custom/" + id, rec); }); return; }
   if (t.dataset.adfind) { switchTab("drinks"); state.projects.clear(); syncProjectChipUI(); state.q = t.dataset.adfind; document.getElementById("search").value = t.dataset.adfind; exitSurprise(); render(); return; }
   if (t.hasAttribute("data-srcadd")) {
@@ -3961,7 +4065,17 @@ document.addEventListener("click", (e) => {
 function updatesList() {
   const items = [];
   const day = (ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  for (const c of Object.values(typeof CUSTOM !== "undefined" ? CUSTOM : {})) items.push({ ts: c.ts, kind: "Cocktail added", text: c.title, sub: [c.creator, c.url ? platformOf(c.url) : ""].filter(Boolean).join(" · "), find: c.title });
+  { const auto = new Map();   // automatic pulls → one line per creator per day
+    for (const c of Object.values(typeof CUSTOM !== "undefined" ? CUSTOM : {})) {
+      if (c.removed || (c._auto && c.needsSpecs)) continue;
+      if (!c._auto) { items.push({ ts: c.ts, kind: "Cocktail added", text: c.title, sub: [c.creator, c.url ? platformOf(c.url) : ""].filter(Boolean).join(" · "), find: c.title }); continue; }
+      if (!c.ts) continue;
+      const k = (c.creator || "") + "|" + day(c.ts);
+      if (!auto.has(k)) auto.set(k, { ts: c.ts, creator: c.creator || "a channel", names: [], n: 0 });
+      const g = auto.get(k); g.n++; g.ts = Math.max(g.ts, c.ts); if (g.names.length < 4) g.names.push(c.title);
+    }
+    for (const g of auto.values()) items.push(g.n === 1 ? { ts: g.ts, kind: "New from " + g.creator, text: g.names[0], sub: "pulled in automatically", find: g.names[0] }
+      : { ts: g.ts, kind: "New from " + g.creator, text: `${g.n} new drinks`, sub: g.names.join(", ") + (g.n > g.names.length ? "…" : "") }); }
   for (const s of Object.values(typeof SOURCES !== "undefined" ? SOURCES : {})) items.push({ ts: s.ts, kind: s.status === "imported" ? "Source imported" : "Source added", text: s.name, sub: s.status === "manual" ? `${s.platform || ""} · drinks added by hand` : s.status === "queued" ? "waiting to import" : s.platform || "" });
   for (const p of Object.values(PREPS)) items.push({ ts: p.ts, kind: "Prep recipe added", text: p.name, sub: p.c || "" , prep: true });
   for (const c of Object.values(typeof CUSTOM_OCC !== "undefined" ? CUSTOM_OCC : {})) items.push({ ts: c.ts, kind: "Occasion added", text: c.name, sub: [c.season ? PROJECT_LABEL[c.season] : "", c.about || ""].filter(Boolean).join(" · ") });
@@ -3989,7 +4103,7 @@ function openUpdates() {
   const items = updatesList();
   const days = [...new Set(items.map((i) => i.day))];
   document.getElementById("ed-box").innerHTML = `
-    <div class="ed-head"><div><div class="eyebrow">Hand-added & updated</div><h2>What's new</h2><div class="ed-sub">Cocktails, sources, prep recipes and card fixes added by hand — newest first.</div></div><button class="ed-x" data-updclose aria-label="Close">✕</button></div>
+    <div class="ed-head"><div><div class="eyebrow">Added & updated</div><h2>What's new</h2><div class="ed-sub">Cocktails added by the crew or pulled in from your channels, plus sources, prep recipes and card fixes — newest first.</div></div><button class="ed-x" data-updclose aria-label="Close">✕</button></div>
     <div class="ed-body">${items.length ? days.map((dy) => `<div class="ed-label">${escapeHtml(dy)}</div><div class="ws-list">${items.filter((i) => i.day === dy).map((i) => `
       <div class="ws-row"><div class="t"><span class="upd-kind">${escapeHtml(i.kind)}</span> <b>${escapeHtml(i.text)}</b>${i.sub ? `<div class="sub">${escapeHtml(i.sub)}</div>` : ""}</div>
       ${i.occ ? `<button class="ws-btn" data-occ="${escapeHtml(i.occ)}" data-updclose>See them</button>` : i.find ? `<button class="ws-btn" data-updfind="${escapeHtml(i.find)}">See it</button>` : i.prep ? `<button class="ws-btn" data-updprep="${escapeHtml(i.text)}">See it</button>` : ""}</div>`).join("")}</div>`).join("") : `<div class="ws-empty">Nothing added by hand yet. Cocktails, sources, prep recipes and card fixes show up here as they're added.</div>`}</div>`;
@@ -4519,12 +4633,7 @@ async function init() {
   CHECKS.forEach((c) => { if (c.decision) DECISIONS[c.id] = c.decision; });
   surpriseSeed = pickSurpriseBatch();
 
-  const creatorCount = new Set(DRINKS.map((d) => d.c)).size;
-  document.getElementById("stat-row").innerHTML =
-    `<span><b>${DRINKS.length.toLocaleString()}</b> drinks</span>` +
-    `<span><b>${creatorCount.toLocaleString()}</b> sources</span>` +
-    `<span><b>${SYRUPS.length.toLocaleString()}</b> syrups &amp; preps</span>` +
-    `<span><b>${PROJECT_ORDER.length.toLocaleString()}</b> seasonal projects</span>`;
+  updateStats();
 
   const creators = [...new Set(DRINKS.map((d) => d.c))].sort();
   const sel = document.getElementById("creator-select");
@@ -4600,6 +4709,7 @@ async function init() {
   setupProjectChips();
   setupNaProjectChips();
 
+  if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) document.getElementById("search").placeholder = "Search drinks or “gin, lime, -coconut”";
   document.getElementById("search").addEventListener("input", (e) => {
     exitSurprise();
     state.q = e.target.value;
